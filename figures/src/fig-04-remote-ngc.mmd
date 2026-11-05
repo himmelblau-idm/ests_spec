@@ -1,0 +1,29 @@
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant E as ESTS
+  participant A as Authenticator app<br/>(user device)
+  Note over C,E: Common prefix: authorize and GetCredentialType (Figure 2)<br/>Credentials.RemoteNgcParams{SessionIdentifier, Entropy, Application}
+  C->>E: POST /common/GetOneTimeCode (JSON)
+  Note over C,E: headers: canary, client-request-id<br/>body: Channel=Authenticator, FlowToken=sFT, OriginalRequest=sCtx,<br/>OldDeviceCode=RemoteNgcParams.SessionIdentifier
+  E-->>C: 200 JSON: RemoteNgcParams{SessionIdentifier, Entropy,<br/>DefaultType: 3, UserCode}
+  E-)A: push notification (out of band)
+  Note over C,E: Display Entropy (number match) to the user
+  loop poll
+    Note over C,E: while AuthorizationState is 0 (about every 5 seconds, stop on timeout)
+    C->>E: POST {urlSessionState}?code={SessionIdentifier}
+    Note over C,E: header canary, body {DeviceCode}
+    E-->>C: 200 {AuthorizationState: 0}  (pending)
+  end
+  A->>E: user approves number match
+  C->>E: POST {urlSessionState}?code={SessionIdentifier}
+  E-->>C: 200 {AuthorizationState: 2}  (approved)
+  C->>E: POST /{tenant}/login (form)
+  Note over C,E: code, psRNGCSLK, login, loginfmt, psRNGCEntropy,<br/>flowToken, canary, ctx
+  alt authorization code issued
+    E-->>C: 302 Location: {redirect_uri}?code=...&session_state=...
+    Note over E,C: + ESTSAUTH, ESTSAUTHPERSISTENT, CCState, ...
+    C->>E: POST /{tenant}/oauth2/token (code exchange, Figure 24)
+  else interrupt
+    E-->>C: 200 HTML with $Config (KMSI, ProofUp, ...) (Figure 13)
+  end

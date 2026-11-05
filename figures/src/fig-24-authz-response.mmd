@@ -1,0 +1,16 @@
+flowchart TB
+  A["Response to a POST that can complete the flow<br/>(or a silent authorize request)"] --> B{"Delivery form"}
+  B -->|"302 with Location"| L["Parse Location URL<br/>read code, session_state<br/>error present means failure; description is optional"]
+  B -->|"302 with HTML body containing an anchor"| H["Read anchor href with an HTML parser<br/>parse URL, then decode query values once"]
+  B -->|"200 HTML with document.location.replace(url)"| J["Decode JavaScript string escapes<br/>parse URL, read code or error"]
+  B -->|"200 HTML from FIDO assertion post<br/>with anchor"| FA["Parse anchor href<br/>for code or error"]
+  B -->|"none of the above"| P["Check auto-submit form (Figure 17),<br/>then Auth Config (interrupt or error)"]
+  L --> X
+  H --> X
+  J --> X
+  FA --> X
+  X["Validate response target and state;<br/>accept code only on success"] -->|"code accepted"| TK["POST /{tenant}/oauth2/token<br/>client_id, grant_type=authorization_code,<br/>code, redirect_uri (identical to authorize)"]
+  X -->|"error or invalid response binding"| REJECT(["Stop; do not redeem a code"])
+  TK --> R{"Response"}
+  R -->|"200 JSON"| OK(["access_token, refresh_token, id_token<br/>expires_in etc. as JSON strings (v1)"])
+  R -->|"400 JSON error, error_description AADSTS..."| ER(["error (Figure 23)"])

@@ -1,0 +1,16 @@
+flowchart TB
+  S["GetCredentialType response"] --> Q0{"IfExistsResult"}
+  Q0 -->|"1 (no account)"| X1(["abort sign-in"])
+  Q0 -->|"2 (throttled) or 4 (server error)"| X2(["wait and retry"])
+  Q0 -->|"5 (personal account)"| DC["Consumers device code grant<br/>(Figure 18)"]
+  Q0 -->|"0 or 6"| Q1{"Credentials.HasAccessPass<br/>true?"}
+  Q1 -->|yes| TAP["Passwordless TAP<br/>(Figure 6)"]
+  Q1 -->|no| Q2{"RemoteNgcParams<br/>non-null?"}
+  Q2 -->|yes| NGC["Passwordless Remote NGC<br/>(Figure 4)"]
+  Q2 -->|no| Q3{"FidoParams<br/>non-null?"}
+  Q3 -->|yes| FIDO["Passwordless FIDO<br/>(Figure 7)"]
+  Q3 -->|no| Q4{"FederationRedirectUrl<br/>present?"}
+  Q4 -->|yes| FED["Federated IdP<br/>(Figure 18)"]
+  Q4 -->|no| Q5{"HasPassword<br/>true?"}
+  Q5 -->|yes| PW["Password submission<br/>(Figure 5)"]
+  Q5 -->|no| X3(["no supported path"])

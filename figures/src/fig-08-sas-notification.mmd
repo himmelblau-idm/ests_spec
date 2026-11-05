@@ -1,0 +1,29 @@
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant E as ESTS
+  participant A as Authenticator app
+  Note over C,E: Password login returned pgid=ConvergedTFA (Figure 5)
+  C->>E: POST /common/SAS/BeginAuth (JSON)  header canary
+  Note over C,E: {AuthMethodId: PhoneAppNotification, Method: BeginAuth, ctx: sCtx,<br/>flowToken: sFT}
+  E-->>C: 200 {Success: true, Entropy, FlowToken, Ctx, SessionId, ...}
+  E-)A: push notification (out of band)
+  Note over C,E: Replace working flowToken and ctx with the BeginAuth FlowToken and<br/>Ctx.<br/>Display Entropy for number matching.
+  loop poll
+    Note over C,E: pollCount = 1, 2, ... up to iMaxPollAttempts, interval<br/>iPollingInterval (about 5 s)
+    C->>E: GET<br/>/common/SAS/EndAuth?authMethodId=PhoneAppNotification&pollCount={n}
+    Note over C,E: headers x-ms-sessionId ($Config.sessionId), x-ms-flowToken, x-ms-ctx
+    E-->>C: 200 {Success: false, ResultValue: AuthenticationPending, Retry:<br/>true}
+  end
+  A->>E: user approves
+  C->>E: GET /common/SAS/EndAuth?...
+  E-->>C: 200 {Success: true, FlowToken, Ctx, MobileAppAuthDetails}
+  C->>E: POST /common/SAS/ProcessAuth (form)
+  Note over C,E: request=Ctx, mfaAuthMethod, login, flowToken, canary
+  alt authorization code issued
+    E-->>C: 302 Location: {redirect_uri}?code=...
+  else interrupt
+    E-->>C: 200 HTML (ConvergedProofUpRedirect, KMSI, ...) (Figure 13)
+  end
+  C->>E: POST /{tenant}/oauth2/token
+  E-->>C: 200 access_token, refresh_token, id_token

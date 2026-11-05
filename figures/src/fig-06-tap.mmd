@@ -1,0 +1,19 @@
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant E as ESTS
+  participant U as User
+  alt passwordless (GetCredentialType)
+    Note over C,E: Credentials.HasAccessPass is true<br/>(request flag isAccessPassSupported=true)
+  else after password login
+    Note over C,E: ConvergedTFA arrUserProofs contains AccessPass
+  end
+  Note over C,E: BeginAuth is not used for AccessPass
+  U-->>C: Temporary Access Pass
+  C->>E: POST {urlPost} (form)
+  Note over C,E: login, loginfmt, accesspass, canary, hpgrequestid=sessionId, flowToken,<br/>ctx (or request when urlPost contains ProcessAuth)
+  alt authorization code issued
+    E-->>C: 302 Location with code
+  else interrupt or auto-submit
+    E-->>C: 200 HTML ($Config or auto-submit form)
+  end

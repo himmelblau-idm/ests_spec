@@ -1,0 +1,20 @@
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant E as ESTS
+  participant U as User / Authenticator app
+  Note over C,E: ConvergedTFA arrUserProofs contains PhoneAppOTP
+  C->>E: POST /common/SAS/BeginAuth  header canary
+  Note over C,E: {AuthMethodId: PhoneAppOTP, Method: BeginAuth, ctx, flowToken}
+  E-->>C: 200 {Success: true, FlowToken, Ctx, SessionId}
+  U-->>C: TOTP code (out of band, from the app)
+  C->>E: POST /common/SAS/EndAuth (JSON)  header canary
+  Note over C,E: {AdditionalAuthData: otp, AuthMethodId, SessionId, FlowToken, Ctx,<br/>Method: EndAuth}
+  alt code accepted
+    E-->>C: 200 {Success: true, FlowToken, Ctx}
+    C->>E: POST /common/SAS/ProcessAuth (form)
+    Note over C,E: request, mfaAuthMethod=PhoneAppOTP, login, flowToken, canary
+    E-->>C: 302 code, or 200 interrupt HTML
+  else code rejected
+    E-->>C: 200 {Success: false, Retry: false, ErrCode}
+  end

@@ -1,0 +1,10 @@
+flowchart TB
+  A["200 HTML response"] --> B{"Interstitial<br/>marker present?"}
+  B -.- MK["Markers (substring match on body):<br/>Click Submit to continue<br/>Working...<br/>Click here to finish the authorization process<br/>input type=submit"]
+  B -->|no| C{"Authorization response?<br/>(Figure 24)"}
+  C -->|yes| T(["extract code"])
+  C -->|no| P["Parse $Config<br/>(Figure 13 / Figure 23)"]
+  B -->|yes| D["Parse first form<br/>resolve action against response URL"]
+  D --> E["Collect enabled continuation inputs<br/>with name and value; preserve duplicates"]
+  E --> F["POST to action<br/>(application/x-www-form-urlencoded)"]
+  F -->|"next response"| B

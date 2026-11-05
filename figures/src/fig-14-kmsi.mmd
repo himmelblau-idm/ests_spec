@@ -1,0 +1,12 @@
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant E as ESTS
+  Note over C,E: Prior response: 200 HTML, pgid = KmsiInterrupt
+  C->>E: POST {urlPost} (form)
+  Note over C,E: LoginOptions=1, ctx, flowToken=sFT (interrupt page), canary,<br/>client-request-id
+  alt authorization code issued
+    E-->>C: 302 Location with code and session_state
+  else further interrupt
+    E-->>C: 200 HTML with a new $Config (re-parse)
+  end

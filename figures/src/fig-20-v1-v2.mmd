@@ -1,0 +1,16 @@
+flowchart TB
+  subgraph V1["v1 endpoints: interactive MFA API surface"]
+    direction TB
+    a1["GET /{tenant}/oauth2/authorize<br/>resource, amr_values=ngcmfa,<br/>caller_app_*, sso_reload"]
+    a1 --> AC["Auth Config pages<br/>follow-on APIs use advertised URLs (absolute or relative)<br/>with no endpoint-version marker"]
+    AC --> a2["POST /{tenant}/oauth2/token<br/>client_id, grant_type, code, redirect_uri"]
+  end
+  subgraph V2["v2.0 endpoints"]
+    direction TB
+    b1["GET /{tenant}/oauth2/v2.0/authorize<br/>scope, code_challenge, state, nonce, domain_hint<br/>ngcmfa and caller_app_* behavior unverified"]
+    b3["POST /{tenant}/oauth2/v2.0/devicecode"]
+    b1 -->|"interactive or silent authorization"| b2["POST /{tenant}/oauth2/v2.0/token<br/>authorization_code, refresh_token,<br/>password, device_code grants"]
+    b3 --> b2
+  end
+  a2 --> T1(["Access token version is chosen by the target resource<br/>(ver 1.0 or 2.0), not by the endpoint"])
+  b2 --> T1

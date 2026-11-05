@@ -1,0 +1,14 @@
+flowchart TB
+  A["MFA success<br/>(ProcessAuth, passwordless login, FIDO or TAP post)"] --> B{"Response"}
+  B -->|"302 / JS redirect / anchor<br/>with code"| T(["Authorization response (Figure 24)"])
+  B -->|"200 HTML"| P{"Parse $Config pgid"}
+  B -->|"auto-submit form<br/>(Working..., Click Submit to continue)"| AS["Auto-submit loop (Figure 17)"]
+  P -->|"KmsiInterrupt"| K["POST urlPost with LoginOptions=1<br/>(Figure 14)"]
+  P -->|"ConvergedProofUpRedirect<br/>with a skip or postponement option"| PU["POST advertised skip-resume URL<br/>or LoginOptions=1 if postponement is offered<br/>(Figure 15)"]
+  P -->|"ConvergedChangePassword"| SS["SSPR begin, poll, confirm<br/>(Figure 16)"]
+  P -->|"ConvergedConsent"| CO(["terminal for this protocol"])
+  P -->|"unhandled error after checking pgid"| ER(["error (Figure 23)"])
+  K --> B
+  PU --> B
+  AS --> B
+  SS -->|"restart sign-in with new password"| R(["new authorize request"])

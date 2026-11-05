@@ -1,0 +1,25 @@
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant E as ESTS (v2.0)
+  participant B as User's browser<br/>(any device)
+  C->>E: POST /{tenant|common}/oauth2/v2.0/devicecode
+  Note over C,E: client_id, scope=openid profile offline_access + resource scopes
+  E-->>C: 200 {device_code, user_code, verification_uri, expires_in,<br/>interval, message}
+  C-->>B: show verification_uri and user_code to the user
+  B->>E: user signs in and completes MFA in a browser
+  loop poll
+    Note over C,E: interval seconds (default 5), on slow_down add 5 seconds,<br/>stop on success, expiry or terminal error
+    C->>E: POST /{tenant|common}/oauth2/v2.0/token
+    Note over C,E: client_id, grant_type=urn:ietf:params:oauth:grant-type:device_code,<br/>device_code
+    E-->>C: 400 {error: authorization_pending, error_codes: [70016]}
+  end
+  C->>E: POST /{tenant|common}/oauth2/v2.0/token (same request)
+  E-->>C: 200 {access_token, refresh_token, id_token, expires_in (number),<br/>scope}
+  Note over C,E: Validate the ID token and compare stable identity claims to the<br/>intended account
+  opt details
+    Note over C,E: redeem the refresh token for another resource
+    C->>E: POST /{tenant}/oauth2/v2.0/token
+    Note over C,E: client_id, grant_type=refresh_token, refresh_token,<br/>scope=...{resource}/.default, client_info=1
+    E-->>C: 200 token response
+  end

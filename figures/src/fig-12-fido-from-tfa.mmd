@@ -1,0 +1,18 @@
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant K as FIDO authenticator<br/>(local)
+  participant E as ESTS
+  participant EF as login.microsoft.com
+  C->>E: POST /{tenant}/login  (username and password, Figure 5)
+  E-->>C: 200 pgid=ConvergedTFA
+  Note over E,C: arrUserProofs includes FidoKey<br/>Auth Config also contains arrFidoAllowList, urlFidoLogin,<br/>iAllowedIdentities, urlPost
+  Note over C,E: BeginAuth is not used for FidoKey
+  C->>EF: POST {urlFidoLogin}
+  Note over C,EF: credentialsJson=arrFidoAllowList[0], other fields as in Figure 7
+  EF-->>C: 200 HTML with a new $Config
+  Note over EF,C: sFidoChallenge, sCrossDomainCanary, sessionId, sFT, sCtx, canary,<br/>urlPost
+  C->>K: challenge
+  K-->>C: assertion
+  C->>E: POST {urlPost}: type=23, ps=23, assertion, lmcCanary,<br/>hpgrequestid, ctx, canary, flowToken
+  E-->>C: 302 with code, 200 HTML anchor with code, or interrupt HTML

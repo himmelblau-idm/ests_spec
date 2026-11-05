@@ -1,0 +1,22 @@
+flowchart TB
+  A["1. Federation provider discovery<br/>GET odc.officeapps.live.com/odc/v2.1/federationProvider<br/>(optional)"] --> B
+  B["2. Authorize<br/>GET /{tenant}/oauth2/authorize<br/>200 HTML with $Config (sFT, sCtx, canary)"] --> C
+  C["3. GetCredentialType<br/>POST /common/GetCredentialType<br/>capability flags and credential parameter blocks"] --> D{"Path selection<br/>(Figure 3)"}
+  D -->|"RemoteNgcParams"| P1["Passwordless Remote NGC<br/>GetOneTimeCode, DeviceCodeStatus poll, login"]
+  D -->|"FidoParams"| P2["Passwordless FIDO<br/>urlFidoLogin, assertion post"]
+  D -->|"HasAccessPass"| P3["Passwordless TAP<br/>post accesspass"]
+  D -->|"HasPassword"| P4["Password<br/>POST /{tenant}/login"]
+  D -->|"FederationRedirectUrl"| P5["Federated IdP<br/>(browser redirect, out of scope)"]
+  D -->|"IfExistsResult 5"| P6["Consumers device code grant"]
+  P4 --> E{"Login outcome<br/>(Figure 5)"}
+  E -->|"ConvergedTFA"| M["SAS MFA<br/>BeginAuth, EndAuth, ProcessAuth<br/>or FIDO / TAP"]
+  E -->|"interrupt page"| I["Post-authentication interrupts<br/>(Figure 13)"]
+  E -->|"302 with code"| T
+  P1 --> I
+  P2 --> I
+  P3 --> I
+  M --> I
+  I --> T["Authorization response<br/>(Figure 24)<br/>extract code"]
+  P1 -->|"302 with code"| T
+  T --> TK["Token exchange<br/>POST /{tenant}/oauth2/token<br/>grant_type=authorization_code"]
+  TK --> OUT(["access_token, refresh_token, id_token"])

@@ -1,0 +1,19 @@
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant E as ESTS
+  Note over C,E: Password login returned pgid=ConvergedChangePassword<br/>urlAsyncSsprBegin, urlAsyncSsprPoll, urlPost (may be root-relative)
+  C->>E: POST {urlAsyncSsprBegin} (JSON)
+  Note over C,E: {Ctx, FlowToken, OldPassword, NewPassword}
+  E-->>C: 200 {IsJobPending: true, Ctx, FlowToken, CoupledDataCenter,<br/>CoupledScaleUnit, ErrorMessage}
+  loop poll
+    Note over C,E: about once per second while IsJobPending is true
+    C->>E: POST {urlAsyncSsprPoll} (JSON)
+    Note over C,E: {Ctx, FlowToken, CoupledDataCenter, CoupledScaleUnit}
+    E-->>C: 200 {IsJobPending, Ctx, FlowToken, ..., ErrorMessage}
+  end
+  Note over C,E: Stop on non-null ErrorMessage. Confirm only after completion without<br/>error.
+  C->>E: POST {urlPost} (JSON)
+  Note over C,E: {Ctx, FlowToken, currentpasswd, confirmnewpasswd, canary}
+  E-->>C: HTTP success status
+  Note over C,E: Restart interactive authentication with the new password<br/>(new authorize request, amr_values=ngcmfa omitted)

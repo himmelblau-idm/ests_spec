@@ -1,0 +1,18 @@
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant O as odc.officeapps.live.com
+  participant E as ESTS<br/>login.microsoftonline.com
+  opt federation discovery
+    C->>O: GET /odc/v2.1/federationProvider?domain={domain}
+    O-->>C: 200 JSON: tenantId, authority_host, endpoint[OrgId, MSA]
+  end
+  C->>E: GET /{tenant}/oauth2/authorize
+  Note over C,E: client_id, response_type=code, redirect_uri, client-request-id,<br/>resource, optional OpenID Connect scope, ...
+  E-->>C: 200 text/html + Set-Cookie (buid, esctx, esctx-{id}, fpc, ...)
+  Note over C,E: Extract the $Config object from the script element.<br/>Keep sFT, sCtx, canary, apiCanary, sessionId, pgid,<br/>url* values. sErrorCode 50058 on this page is not an error.
+  C->>E: POST /common/GetCredentialType?mkt=en-US (JSON)
+  Note over C,E: username, capability flags, originalRequest=sCtx, flowToken=sFT
+  E-->>C: 200 JSON (GetCredentialType response)
+  Note over E,C: IfExistsResult, Credentials{HasPassword, RemoteNgcParams, FidoParams,<br/>HasAccessPass, FederationRedirectUrl}, FlowToken, apiCanary
+  Note over C,E: Select path from populated parameter blocks (Figure 3)
