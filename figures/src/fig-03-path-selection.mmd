@@ -1,16 +1,12 @@
 flowchart TB
-  S["GetCredentialType response"] --> Q0{"IfExistsResult"}
-  Q0 -->|"1 (no account)"| X1(["abort sign-in"])
-  Q0 -->|"2 (throttled) or 4 (server error)"| X2(["wait and retry"])
-  Q0 -->|"5 (personal account)"| DC["Consumers device code grant<br/>(Figure 18)"]
-  Q0 -->|"0 or 6"| Q1{"Credentials.HasAccessPass<br/>true?"}
-  Q1 -->|yes| TAP["Passwordless TAP<br/>(Figure 6)"]
-  Q1 -->|no| Q2{"RemoteNgcParams<br/>non-null?"}
-  Q2 -->|yes| NGC["Passwordless Remote NGC<br/>(Figure 4)"]
-  Q2 -->|no| Q3{"FidoParams<br/>non-null?"}
-  Q3 -->|yes| FIDO["Passwordless FIDO<br/>(Figure 7)"]
-  Q3 -->|no| Q4{"FederationRedirectUrl<br/>present?"}
-  Q4 -->|yes| FED["Federated IdP<br/>(Figure 18)"]
-  Q4 -->|no| Q5{"HasPassword<br/>true?"}
-  Q5 -->|yes| PW["Password submission<br/>(Figure 5)"]
-  Q5 -->|no| X3(["no supported path"])
+ S["GetCredentialType"] --> A{"Account routing"}
+ A -->|"no account / throttled / error"| E(["Handle discovery outcome"])
+ A -->|"personal account route"| X(["External sign-in<br/>upstream references, section 2.19"])
+ A -->|"organizational route"| C{"Select offered credential<br/>with user choice and actual client support"}
+ C -->|"HasAccessPass"| T["TAP, Figure 6"]
+ C -->|"RemoteNgcParams"| N["Remote NGC, Figure 4"]
+ C -->|"FidoParams and usable authenticator"| F["FIDO, Figure 7"]
+ C -->|"FederationRedirectUrl"| I["IdP sign-in and ESTS return, Figure 18"]
+ C -->|"HasPassword"| P["Password login, Figure 5"]
+ C -->|"no usable path"| U(["External interaction required"])
+ C -.- H["PrefCredential is a hint<br/>not a fixed attempt order"]

@@ -8,9 +8,9 @@ sequenceDiagram
   Note over C,E: headers: canary, client-request-id<br/>body: Channel=Authenticator, FlowToken=sFT, OriginalRequest=sCtx,<br/>OldDeviceCode=RemoteNgcParams.SessionIdentifier
   E-->>C: 200 JSON: RemoteNgcParams{SessionIdentifier, Entropy,<br/>DefaultType: 3, UserCode}
   E-)A: push notification (out of band)
-  Note over C,E: Display Entropy (number match) to the user
-  loop poll
-    Note over C,E: while AuthorizationState is 0 (about every 5 seconds, stop on timeout)
+  Note over C,E: Use returned SessionIdentifier and Entropy, display number match
+  loop repeat
+    Note over C,E: pending within a finite local deadline, stop on cancellation or<br/>failure
     C->>E: POST {urlSessionState}?code={SessionIdentifier}
     Note over C,E: header canary, body {DeviceCode}
     E-->>C: 200 {AuthorizationState: 0}  (pending)
@@ -23,7 +23,7 @@ sequenceDiagram
   alt authorization code issued
     E-->>C: 302 Location: {redirect_uri}?code=...&session_state=...
     Note over E,C: + ESTSAUTH, ESTSAUTHPERSISTENT, CCState, ...
-    C->>E: POST /{tenant}/oauth2/token (code exchange, Figure 24)
+    Note over C,E: ESTS complete: upstream OAuth handoff (section 2.12)
   else interrupt
     E-->>C: 200 HTML with $Config (KMSI, ProofUp, ...) (Figure 13)
   end

@@ -1,0 +1,28 @@
+sequenceDiagram
+ participant C as Client state
+ participant E as ESTS
+ Note over C,E: Entry page: retain sFT, sCtx, canary, sessionId, and URLs<br/>Discovery and Remote NGC do not blanket-replace entry state
+ C->>E: BeginAuth using MFA-page sFT, sCtx, and SAS canary
+ E-->>C: Save SAS SessionId, FlowToken, and Ctx separately
+ alt EndAuth GET, retained-state pattern
+  C->>E: x-ms-sessionId = MFA-page sessionId
+  Note over C,E: x-ms-flowToken and x-ms-ctx = BeginAuth values
+  E-->>C: Pending, keep BeginAuth token and context for next poll
+ else EndAuth GET, response-state pattern
+  C->>E: x-ms-sessionId, x-ms-flowToken, x-ms-ctx
+  Note over C,E: from preceding SAS response
+  E-->>C: Pending, save returned SAS state for next poll
+ else EndAuth POST, code entry
+  C->>E: BeginAuth SessionId, FlowToken, Ctx, plus entered code
+  E-->>C: Recoverable code rejection can permit another entry
+  Note over E,C: keep challenge state, do not repeat BeginAuth
+ end
+ E-->>C: Successful EndAuth supplies completion FlowToken and Ctx
+ C->>E: ProcessAuth: flowToken = successful FlowToken
+ Note over C,E: request = successful Ctx, canary = MFA-page canary
+ opt ProofUp skip URL advertised
+  E-->>C: New ProofUp sFT and canary, sCtx can be absent
+  C->>E: Skip resume: flowtoken = ProofUp sFT, canary = ProofUp canary
+  Note over C,E: ctx = preceding ProcessAuth request when sCtx is absent
+ end
+ Note over C,E: FIDO uses a separate bootstrap without blanket state replacement<br/>Keep initiating urlPost, sFT, sCtx, and canary<br/>Bootstrap supplies challenge, cross-domain canary, and completion<br/>sessionId

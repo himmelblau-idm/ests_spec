@@ -1,19 +1,23 @@
 sequenceDiagram
-  autonumber
-  participant C as Client
-  participant E as ESTS
-  Note over C,E: Password login returned pgid=ConvergedChangePassword<br/>urlAsyncSsprBegin, urlAsyncSsprPoll, urlPost (may be root-relative)
-  C->>E: POST {urlAsyncSsprBegin} (JSON)
-  Note over C,E: {Ctx, FlowToken, OldPassword, NewPassword}
-  E-->>C: 200 {IsJobPending: true, Ctx, FlowToken, CoupledDataCenter,<br/>CoupledScaleUnit, ErrorMessage}
-  loop poll
-    Note over C,E: about once per second while IsJobPending is true
-    C->>E: POST {urlAsyncSsprPoll} (JSON)
-    Note over C,E: {Ctx, FlowToken, CoupledDataCenter, CoupledScaleUnit}
-    E-->>C: 200 {IsJobPending, Ctx, FlowToken, ..., ErrorMessage}
-  end
-  Note over C,E: Stop on non-null ErrorMessage. Confirm only after completion without<br/>error.
+ autonumber
+ participant C as Client
+ participant E as ESTS
+ Note over C,E: ConvergedChangePassword advertises begin, poll, and confirmation URLs
+ C->>E: POST {urlAsyncSsprBegin} (JSON)
+ Note over C,E: Ctx=sCtx, FlowToken=sFT, OldPassword, NewPassword
+ E-->>C: IsJobPending, Ctx, FlowToken, routing fields, ErrorMessage
+ loop job pending within local deadline
+  C->>E: POST {urlAsyncSsprPoll} (JSON)
+  Note over C,E: preceding Ctx, FlowToken, CoupledDataCenter, CoupledScaleUnit
+  E-->>C: Updated job state and ErrorMessage
+ end
+ Note over C,E: Confirm only when completed without ErrorMessage
+ alt JSON confirmation
   C->>E: POST {urlPost} (JSON)
-  Note over C,E: {Ctx, FlowToken, currentpasswd, confirmnewpasswd, canary}
-  E-->>C: HTTP success status
-  Note over C,E: Restart interactive authentication with the new password<br/>(new authorize request, amr_values=ngcmfa omitted)
+  Note over C,E: Ctx, FlowToken, currentpasswd, confirmnewpasswd, canary
+ else form confirmation
+  C->>E: POST {urlPost} (form)
+  Note over C,E: ctx, flowToken, currentpasswd, confirmnewpasswd, canary
+ end
+ E-->>C: Confirmation status, authorization response, or page
+ Note over C,E: Dispatch returned page, restart with new password only if continuation<br/>unavailable<br/>Restart is client recovery, not a required server transition

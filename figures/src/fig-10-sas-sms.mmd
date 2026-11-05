@@ -4,14 +4,15 @@ sequenceDiagram
   participant E as ESTS
   participant U as User phone
   Note over C,E: arrUserProofs contains OneWaySMS or ConsolidatedTelephony<br/>(display carries a masked phone number)
-  C->>E: POST /common/SAS/BeginAuth  header canary
+  C->>E: POST /common/SAS/BeginAuth  header canary (SAS form, section<br/>2.9)
   Note over C,E: {AuthMethodId: OneWaySMS | ConsolidatedTelephony, Method: BeginAuth,<br/>ctx, flowToken}
   E-->>C: 200 {Success: true, FlowToken, Ctx, SessionId}
   E-)U: SMS code (out of band)
   U-->>C: SMS code
-  C->>E: POST /common/SAS/EndAuth (JSON)  header canary
+  C->>E: POST /common/SAS/EndAuth (JSON)  header canary (SAS form,<br/>section 2.9)
   Note over C,E: {AdditionalAuthData: smsCode, AuthMethodId, SessionId, FlowToken, Ctx,<br/>Method: EndAuth}
   E-->>C: 200 {Success: true, FlowToken, Ctx}
+  Note over C,E: Code rejection: apply code-entry retry rules (Figure 9)
   C->>E: POST /common/SAS/ProcessAuth (form)
   Note over C,E: mfaAuthMethod=OneWaySMS  (even when the method was<br/>ConsolidatedTelephony)
   E-->>C: 302 code, or 200 interrupt HTML

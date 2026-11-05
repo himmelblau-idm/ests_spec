@@ -1,20 +1,33 @@
 sequenceDiagram
-  autonumber
-  participant C as Client
-  participant E as ESTS
-  participant U as User / Authenticator app
-  Note over C,E: ConvergedTFA arrUserProofs contains PhoneAppOTP
-  C->>E: POST /common/SAS/BeginAuth  header canary
-  Note over C,E: {AuthMethodId: PhoneAppOTP, Method: BeginAuth, ctx, flowToken}
-  E-->>C: 200 {Success: true, FlowToken, Ctx, SessionId}
-  U-->>C: TOTP code (out of band, from the app)
-  C->>E: POST /common/SAS/EndAuth (JSON)  header canary
-  Note over C,E: {AdditionalAuthData: otp, AuthMethodId, SessionId, FlowToken, Ctx,<br/>Method: EndAuth}
-  alt code accepted
-    E-->>C: 200 {Success: true, FlowToken, Ctx}
-    C->>E: POST /common/SAS/ProcessAuth (form)
-    Note over C,E: request, mfaAuthMethod=PhoneAppOTP, login, flowToken, canary
-    E-->>C: 302 code, or 200 interrupt HTML
-  else code rejected
-    E-->>C: 200 {Success: false, Retry: false, ErrCode}
+ autonumber
+ participant C as Client
+ participant E as ESTS
+ participant U as User
+ Note over C,E: ConvergedTFA offers PhoneAppOTP
+ C->>E: POST {urlBeginAuth}
+ Note over C,E: AuthMethodId=PhoneAppOTP, Method=BeginAuth, ctx, flowToken, SAS canary<br/>header
+ E-->>C: Success=true, FlowToken, Ctx, SessionId
+ loop repeat
+   Note over C,E: user submits a code within local deadline
+  U-->>C: OTP as a string, preserving leading zeroes
+  C->>E: POST {urlEndAuth} (JSON)
+  Note over C,E: AdditionalAuthData=trimmed OTP, AuthMethodId, Method=EndAuth,<br/>BeginAuth SessionId, FlowToken, Ctx, SAS canary header
+  alt recoverable code rejection
+   E-->>C: Success=false, diagnostic code-rejection details
+   Note over E,C: Retry may be absent or false
+   Note over C,E: Re-prompt using retained challenge state, do not repeat BeginAuth<br/>Do not infer recoverability merely from presence of Message
+  else terminal or unrecognized failure
+   E-->>C: Failure or HTML service error
+   break terminal failure
+    Note over C,E: Stop or explicit recovery, no ProcessAuth
+   end
+  else code accepted
+   E-->>C: Success=true, FlowToken, Ctx
+   C->>E: POST {MFA-page urlPost}
+   Note over C,E: request=successful Ctx, flowToken=successful FlowToken,<br/>mfaAuthMethod=PhoneAppOTP, login, MFA-page canary
+   E-->>C: Authorization response, interrupt, continuation, or error
+   break code accepted
+    Note over C,E: Leave code-entry loop and dispatch completion response
+   end
   end
+ end

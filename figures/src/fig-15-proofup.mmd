@@ -3,7 +3,7 @@ sequenceDiagram
   participant C as Client
   participant E as ESTS<br/>login.microsoftonline.com
   participant R as mysignins.microsoft.com<br/>(registration, not specified)
-  Note over C,E: After ProcessAuth or login: 200 pgid=ConvergedProofUpRedirect<br/>sErrorCode 50203, urlSkipMfaRegistration<br/>urlPost on the registration host, no sCtx
+  Note over C,E: After ProcessAuth or login: 200 pgid=ConvergedProofUpRedirect<br/>sErrorCode can be 50203, skip URL may exist without remaining-days<br/>metadata<br/>urlPost on the registration host, no sCtx
   alt registration required or chosen
     C-xR: register a method (out of scope)
   else skip (urlSkipMfaRegistration advertised)
@@ -11,7 +11,7 @@ sequenceDiagram
     Note over C,E: flowtoken=sFT, ctx=request value posted to ProcessAuth, canary
     E-->>C: 302 Location with code and session_state
     Note over E,C: + authenticated cookies, CCState, SignInStateCookie
-  else postponement days remain (iRemainingDaysToSkipMfaRegistration)
+  else postponement is offered (remaining days)
     C->>E: POST current urlPost: LoginOptions=1, ctx, flowToken (preceding<br/>page), canary (interrupt page)
     E-->>C: new $Config, 302 with code, or further interrupt
   end

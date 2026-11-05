@@ -67,6 +67,16 @@ pre {
   padding: 0.75rem;
   border: 1px solid #eaeaea;
 }
+@media print {
+  pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    overflow: visible;
+  }
+  .protocol-table {
+    overflow-wrap: anywhere;
+  }
+}
 </style>
 
 # eSTS Interactive Multi-Factor Authentication Protocol
@@ -104,8 +114,9 @@ otherwise noted.
  <tr>
   <td><p>11/04/2026</p></td>
   <td><p>0.03</p></td>
-  <td><p>Minor: added sequence and flow figures for every authentication path (Figures 1–24).</p></td>
+  <td><p>Minor: added the original 24 sequence and flow figures for the authentication paths.</p></td>
  </tr>
+ <tr><td><p>11/05/2026</p></td><td><p>0.04</p></td><td><p>Major: clarified MFA method selection, SAS request variants and code retries, FIDO state lineage, federated return, and interrupt handling; delegated upstream protocol behavior.</p></td></tr>
 </tbody></table>
 
 # 1 Introduction
@@ -123,7 +134,7 @@ The same endpoints accept direct HTTP requests. A non-browser client can:
 3. Call the credential, MFA challenge, polling, and completion APIs named by
    `$Config`.
 4. Receive an HTTP redirect carrying an authorization `code`.
-5. Exchange that code at the token endpoint.
+5. Hand the code to the upstream OAuth authorization-code protocol (§2.12).
 
 ESTS exposes several interactive completion patterns that share Auth Config
 discovery and diverge after GetCredentialType or after password login. The
@@ -136,7 +147,7 @@ full catalog is in [§1.3](#13-protocol-operation-sequences) and
 - Password then SAS methods: PhoneAppNotification, CompanionAppsNotification,
   PhoneAppOTP, OneWaySMS, ConsolidatedTelephony, TwoWayVoice*
 - Post-auth interrupts: KMSI, MFA ProofUp, password change (SSPR), consent
-- OAuth 2.0 device authorization grant (organizational and consumers)
+- Federated return to ESTS followed by the same MFA and interrupt handling
 
 All authorization-code patterns conclude by delivering `code` to the
 `redirect_uri` from the original authorize request (unless an interrupt is
@@ -243,30 +254,28 @@ Clients MUST store cookies from ESTS `Set-Cookie` headers and send applicable,
 unexpired cookies on subsequent requests, respecting their domain, path, and
 security attributes ([§2.20](#220-session-cookies-and-response-headers)).
 
-<p style="text-align:center"><a href="images/fig-01-overview.png"><img src="images/fig-01-overview.png" alt="Figure 1: End-to-end overview of the interactive authentication phases and the paths between them." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 1</b>: End-to-end overview of the interactive authentication phases and the paths between them.</p>
+<p style="text-align:center"><a href="images/fig-01-overview.png"><img src="images/fig-01-overview.png" alt="Figure 1: Overview of ESTS interaction and upstream protocol boundaries." style="max-width:100%"/></a></p>
+<p style="text-align:center"><b>Figure 1</b>: Overview of ESTS interaction and upstream protocol boundaries.</p>
 
 <a id="13-protocol-operation-sequences"></a>
 
 ## 1.3 Protocol Operation Sequences
 
 ESTS offers multiple interactive authentication paths. Which path applies is
-determined by GetCredentialType capability flags / `PrefCredential`, by the
-Auth Config returned after password submission (`arrUserProofs`, `pgid`), and
+determined by offered credentials, supported client capabilities, user choice, by the
+Auth Config returned after primary authentication (`arrUserProofs`, `pgid`), and
 by interrupts ESTS inserts before issuing an authorization code.
 
 All paths share a common prefix unless noted:
 
-1. Optional federation provider discovery ([§2.1](#21-federation-provider-discovery)).
+1. Select the tenant/cloud authority (§2.1); discovery is an external prerequisite.
 2. `GET /{tenant}/oauth2/authorize` and parse `$Config`
    ([§2.2](#22-oauth-20-authorize-and-auth-config-discovery),
    [§2.3](#23-auth-config-config)).
-3. `POST /common/GetCredentialType` ([§2.4](#24-getcredentialtype)), except
-   where a path is entered solely via the OAuth device-code grant
-   ([§2.19](#219-oauth-20-device-authorization-grant)).
+3. `POST /common/GetCredentialType` ([§2.4](#24-getcredentialtype)).
 
-<p style="text-align:center"><a href="images/fig-02-common-prefix.png"><img src="images/fig-02-common-prefix.png" alt="Figure 2: Common prefix: federation discovery, authorize, Auth Config extraction and GetCredentialType." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 2</b>: Common prefix: federation discovery, authorize, Auth Config extraction and GetCredentialType.</p>
+<p style="text-align:center"><a href="images/fig-02-common-prefix.png"><img src="images/fig-02-common-prefix.png" alt="Figure 2: Common prefix: authority selection, authorize entry, Auth Config, and credential discovery." style="max-width:100%"/></a></p>
+<p style="text-align:center"><b>Figure 2</b>: Common prefix: authority selection, authorize entry, Auth Config, and credential discovery.</p>
 
 <a id="131-path-selection-after-getcredentialtype"></a>
 
@@ -292,13 +301,13 @@ All paths share a common prefix unless noted:
  </tr>
  <tr>
   <td><p><code>FederationRedirectUrl</code> present</p></td>
-  <td><p>Federated IdP redirect (out of scope for ESTS SAS MFA)</p></td>
+  <td><p>External IdP sign-in, then return to ESTS (§1.3.12)</p></td>
   <td><p>§1.3.12</p></td>
  </tr>
  <tr>
   <td><p><code>IfExistsResult == 5</code> (personal Microsoft account)</p></td>
-  <td><p>Consumers device-code grant</p></td>
-  <td><p>§2.19.2</p></td>
+  <td><p>External personal-account sign-in (§2.19)</p></td>
+  <td><p>§2.19</p></td>
  </tr>
  <tr>
   <td><p><code>HasPassword</code> true (typical organizational account)</p></td>
@@ -307,28 +316,28 @@ All paths share a common prefix unless noted:
  </tr>
 </tbody></table>
 
-<p style="text-align:center"><a href="images/fig-03-path-selection.png"><img src="images/fig-03-path-selection.png" alt="Figure 3: Path selection from the GetCredentialType response." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 3</b>: Path selection from the GetCredentialType response.</p>
+<p style="text-align:center"><a href="images/fig-03-path-selection.png"><img src="images/fig-03-path-selection.png" alt="Figure 3: Selection among usable offered credentials without a fixed attempt order." style="max-width:100%"/></a></p>
+<p style="text-align:center"><b>Figure 3</b>: Selection among usable offered credentials without a fixed attempt order.</p>
 
-`PrefCredential` is a numeric preference hint whose value assignments are
-not a reliable method selector:
+The table lists available paths, not a required order of attempts. A client
+selects among offered credentials using its actual capabilities and the user's
+choice. `PrefCredential` is a preference hint; its numeric value alone does
+not establish usable parameters for a method. In particular, values `2` and
+`7` can accompany Remote NGC, and `2` can also accompany FIDO.
 
-- `PrefCredential: 2` has been returned together with `HasRemoteNGC: true`, a
-  populated `RemoteNgcParams`, and `FidoParams: null`.
-- `PrefCredential: 1` has been returned together with `HasPassword: true` and
-  every `*Params` block null.
-- The values `7` (Remote NGC) and `13` (Access Pass) have also been used by
-  ESTS for other account configurations, and `2` has been associated with FIDO.
-  The same value therefore does not identify the same method in every
-  response.
+For ConvergedTFA, select an offered `arrUserProofs` entry. `isDefault` marks
+a preferred proof and `display` provides its label, such as a masked phone
+number. An explicit user selection may choose another supported entry.
+Ignore unsupported proof identifiers when finding a usable method, retaining
+them as unknown extensions rather than treating the entire list as invalid.
+An empty list or a list with no usable proof requires external interaction or
+an optional upstream alternative (§2.19), not a guessed SAS method.
 
-A client SHOULD therefore select a path from the presence of the
-corresponding parameter blocks (`RemoteNgcParams`, `FidoParams`) and the
-`HasAccessPass` flag, and MUST NOT infer a method from the numeric
-`PrefCredential` alone. ESTS MAY still expose other methods in
-`Credentials.*Params` or later in `arrUserProofs`. The capability request
-flags on GetCredentialType (`isRemoteNGCSupported`, `isFidoSupported`,
-`isAccessPassSupported`) influence which parameter blocks are populated.
+Capability flags on GetCredentialType influence the returned parameter blocks.
+Advertise only capabilities the client can perform. FIDO availability, a
+cross-device-capable passkey, and possession of a usable physical key are
+separate facts; a server feature flag is not proof of any particular local
+authenticator. Method preference and any fallback order are client policy.
 
 ### 1.3.2 Passwordless Remote NGC Sequence
 
@@ -341,8 +350,8 @@ flags on GetCredentialType (`isRemoteNGCSupported`, `isFidoSupported`,
 5. Handle any post-login interrupt ([§1.3.11](#1311-post-authentication-interrupts)),
    then exchange `code` ([§2.12](#212-authorization-code-token-exchange)).
 
-<p style="text-align:center"><a href="images/fig-04-remote-ngc.png"><img src="images/fig-04-remote-ngc.png" alt="Figure 4: Passwordless Remote NGC (Authenticator) sequence." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 4</b>: Passwordless Remote NGC (Authenticator) sequence.</p>
+<p style="text-align:center"><a href="images/fig-04-remote-ngc.png"><img src="images/fig-04-remote-ngc.png" alt="Figure 4: Passwordless Remote NGC challenge, polling, and completion." style="max-width:100%"/></a></p>
+<p style="text-align:center"><b>Figure 4</b>: Passwordless Remote NGC challenge, polling, and completion.</p>
 
 ### 1.3.3 Password Submission, Then Branch
 
@@ -354,7 +363,7 @@ flags on GetCredentialType (`isRemoteNGCSupported`, `isFidoSupported`,
 <table class="protocol-table"><thead>
   <tr><th><p>Outcome</p></th><th><p>Next</p></th></tr>
 </thead><tbody>
- <tr><td><p><code>302</code> with <code>code</code></p></td><td><p>No further MFA; token exchange (§2.12).</p></td></tr>
+ <tr><td><p><code>302</code> with <code>code</code></p></td><td><p>No further challenge; upstream handoff (§2.12).</p></td></tr>
  <tr><td><p><code>pgid=ConvergedTFA</code> with <code>arrUserProofs</code></p></td><td><p>SAS or FIDO/AccessPass proof (§1.3.6–§1.3.10).</p></td></tr>
  <tr><td><p><code>pgid=KmsiInterrupt</code></p></td><td><p>KMSI continue (§2.16).</p></td></tr>
  <tr><td><p><code>pgid=ConvergedProofUpRedirect</code></p></td><td><p>MFA registration interrupt (§2.13 / §2.16).</p></td></tr>
@@ -363,8 +372,8 @@ flags on GetCredentialType (`isRemoteNGCSupported`, `isFidoSupported`,
  <tr><td><p>Auto-submit HTML (“Working…”)</p></td><td><p>POST form action until Auth Config or redirect (§2.18).</p></td></tr>
 </tbody></table>
 
-<p style="text-align:center"><a href="images/fig-05-password-branch.png"><img src="images/fig-05-password-branch.png" alt="Figure 5: Password submission and the branches on the login response." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 5</b>: Password submission and the branches on the login response.</p>
+<p style="text-align:center"><a href="images/fig-05-password-branch.png"><img src="images/fig-05-password-branch.png" alt="Figure 5: Primary password authentication and response branches." style="max-width:100%"/></a></p>
+<p style="text-align:center"><b>Figure 5</b>: Primary password authentication and response branches.</p>
 
 ### 1.3.4 Passwordless Temporary Access Pass Sequence
 
@@ -374,8 +383,8 @@ flags on GetCredentialType (`isRemoteNGCSupported`, `isFidoSupported`,
    ([§2.15](#215-temporary-access-pass-completion)).
 4. Obtain `code` (possibly after interrupts) and exchange (§2.12).
 
-<p style="text-align:center"><a href="images/fig-06-tap.png"><img src="images/fig-06-tap.png" alt="Figure 6: Temporary Access Pass sequence (passwordless and after password login)." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 6</b>: Temporary Access Pass sequence (passwordless and after password login).</p>
+<p style="text-align:center"><a href="images/fig-06-tap.png"><img src="images/fig-06-tap.png" alt="Figure 6: Temporary Access Pass completion without SAS BeginAuth." style="max-width:100%"/></a></p>
+<p style="text-align:center"><b>Figure 6</b>: Temporary Access Pass completion without SAS BeginAuth.</p>
 
 ### 1.3.5 Passwordless FIDO Sequence
 
@@ -387,8 +396,8 @@ flags on GetCredentialType (`isRemoteNGCSupported`, `isFidoSupported`,
    ([§2.14.2](#2142-fido-assertion-completion)).
 5. Handle any interrupts, obtain `code`, and exchange it (§2.12).
 
-<p style="text-align:center"><a href="images/fig-07-fido-passwordless.png"><img src="images/fig-07-fido-passwordless.png" alt="Figure 7: Passwordless FIDO sequence." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 7</b>: Passwordless FIDO sequence.</p>
+<p style="text-align:center"><a href="images/fig-07-fido-passwordless.png"><img src="images/fig-07-fido-passwordless.png" alt="Figure 7: Passwordless FIDO bootstrap and assertion state." style="max-width:100%"/></a></p>
+<p style="text-align:center"><b>Figure 7</b>: Passwordless FIDO bootstrap and assertion state.</p>
 
 ### 1.3.6 SAS PhoneAppNotification / CompanionAppsNotification (Poll)
 
@@ -401,8 +410,8 @@ Entered from ConvergedTFA when `arrUserProofs` contains
 4. `POST /common/SAS/ProcessAuth` ([§2.11](#211-sas-processauth)).
 5. Handle interrupts; exchange `code`.
 
-<p style="text-align:center"><a href="images/fig-08-sas-notification.png"><img src="images/fig-08-sas-notification.png" alt="Figure 8: Password plus SAS PhoneAppNotification (poll) sequence through token exchange." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 8</b>: Password plus SAS PhoneAppNotification (poll) sequence through token exchange.</p>
+<p style="text-align:center"><a href="images/fig-08-sas-notification.png"><img src="images/fig-08-sas-notification.png" alt="Figure 8: Notification MFA with alternative SAS polling-state patterns." style="max-width:100%"/></a></p>
+<p style="text-align:center"><b>Figure 8</b>: Notification MFA with alternative SAS polling-state patterns.</p>
 
 ### 1.3.7 SAS PhoneAppOTP (Code Entry)
 
@@ -416,8 +425,8 @@ Entered when `arrUserProofs` contains `PhoneAppOTP` (often with
 4. `POST /common/SAS/ProcessAuth` with `mfaAuthMethod=PhoneAppOTP`.
 5. Handle interrupts; exchange `code`.
 
-<p style="text-align:center"><a href="images/fig-09-sas-otp.png"><img src="images/fig-09-sas-otp.png" alt="Figure 9: SAS PhoneAppOTP (code entry) sequence." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 9</b>: SAS PhoneAppOTP (code entry) sequence.</p>
+<p style="text-align:center"><a href="images/fig-09-sas-otp.png"><img src="images/fig-09-sas-otp.png" alt="Figure 9: OTP submission, recoverable code rejection, and completion." style="max-width:100%"/></a></p>
+<p style="text-align:center"><b>Figure 9</b>: OTP submission, recoverable code rejection, and completion.</p>
 
 ### 1.3.8 SAS SMS / Consolidated Telephony
 
@@ -432,8 +441,8 @@ Entered when `arrUserProofs` contains `OneWaySMS` or
    `ConsolidatedTelephony` on ProcessAuth).
 5. Handle interrupts; exchange `code`.
 
-<p style="text-align:center"><a href="images/fig-10-sas-sms.png"><img src="images/fig-10-sas-sms.png" alt="Figure 10: SAS OneWaySMS and ConsolidatedTelephony sequence." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 10</b>: SAS OneWaySMS and ConsolidatedTelephony sequence.</p>
+<p style="text-align:center"><a href="images/fig-10-sas-sms.png"><img src="images/fig-10-sas-sms.png" alt="Figure 10: SMS and ConsolidatedTelephony method mapping." style="max-width:100%"/></a></p>
+<p style="text-align:center"><b>Figure 10</b>: SMS and ConsolidatedTelephony method mapping.</p>
 
 ### 1.3.9 SAS Voice Call Methods
 
@@ -446,8 +455,8 @@ Entered when `arrUserProofs` contains `TwoWayVoiceMobile`,
 3. `POST /common/SAS/ProcessAuth` with the same `mfaAuthMethod`.
 4. Handle interrupts; exchange `code`.
 
-<p style="text-align:center"><a href="images/fig-11-sas-voice.png"><img src="images/fig-11-sas-voice.png" alt="Figure 11: SAS TwoWayVoice (poll) sequence." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 11</b>: SAS TwoWayVoice (poll) sequence.</p>
+<p style="text-align:center"><a href="images/fig-11-sas-voice.png"><img src="images/fig-11-sas-voice.png" alt="Figure 11: Voice challenge and bounded approval polling." style="max-width:100%"/></a></p>
+<p style="text-align:center"><b>Figure 11</b>: Voice challenge and bounded approval polling.</p>
 
 ### 1.3.10 FIDO or Access Pass From ConvergedTFA
 
@@ -461,19 +470,21 @@ alongside SAS methods.
 - __AccessPass__: Collect TAP and POST to `urlPost` ([§2.15](#215-temporary-access-pass-completion)).
   BeginAuth is not used for AccessPass.
 
-<p style="text-align:center"><a href="images/fig-12-fido-from-tfa.png"><img src="images/fig-12-fido-from-tfa.png" alt="Figure 12: FIDO key as an MFA method after password login." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 12</b>: FIDO key as an MFA method after password login.</p>
+<p style="text-align:center"><a href="images/fig-12-fido-from-tfa.png"><img src="images/fig-12-fido-from-tfa.png" alt="Figure 12: FIDO selected from ConvergedTFA, retaining initiating state." style="max-width:100%"/></a></p>
+<p style="text-align:center"><b>Figure 12</b>: FIDO selected from ConvergedTFA, retaining initiating state.</p>
 
 <a id="1311-post-authentication-interrupts"></a>
 
 ### 1.3.11 Post-Authentication Interrupts
 
-After MFA success (ProcessAuth, passwordless login, or FIDO/TAP completion),
-ESTS MAY return HTML instead of an authorization-code redirect:
+After primary authentication or proof completion (including ProcessAuth,
+passwordless login, and FIDO/TAP), ESTS may return another proof page,
+an interrupt, or a continuation instead of an authorization response:
 
 <table class="protocol-table"><thead>
   <tr><th><p>pgid / condition</p></th><th><p>Wire handling</p></th></tr>
 </thead><tbody>
+ <tr><td><p><code>ConvergedTFA</code> with <code>arrUserProofs</code></p></td><td><p>Another proof is required. Select a usable offered method with this page's state (§1.3.1); do not treat the preceding credential completion as final authorization.</p></td></tr>
  <tr>
   <td><p><code>KmsiInterrupt</code></p></td>
   <td><p>POST <code>urlPost</code> with <code>LoginOptions=1</code>, <code>ctx</code>, <code>flowToken</code>, <code>canary</code>
@@ -502,122 +513,86 @@ ESTS MAY return HTML instead of an authorization-code redirect:
  </tr>
 </tbody></table>
 
-<p style="text-align:center"><a href="images/fig-13-interrupts.png"><img src="images/fig-13-interrupts.png" alt="Figure 13: Post-authentication interrupt handling." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 13</b>: Post-authentication interrupt handling.</p>
+<p style="text-align:center"><a href="images/fig-13-interrupts.png"><img src="images/fig-13-interrupts.png" alt="Figure 13: Response dispatch across MFA, interrupts, continuations, and errors." style="max-width:100%"/></a></p>
+<p style="text-align:center"><b>Figure 13</b>: Response dispatch across MFA, interrupts, continuations, and errors.</p>
 
-<p style="text-align:center"><a href="images/fig-14-kmsi.png"><img src="images/fig-14-kmsi.png" alt="Figure 14: KMSI continue sequence." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 14</b>: KMSI continue sequence.</p>
+<p style="text-align:center"><a href="images/fig-14-kmsi.png"><img src="images/fig-14-kmsi.png" alt="Figure 14: KMSI continuation." style="max-width:100%"/></a></p>
+<p style="text-align:center"><b>Figure 14</b>: KMSI continuation.</p>
 
-<p style="text-align:center"><a href="images/fig-15-proofup.png"><img src="images/fig-15-proofup.png" alt="Figure 15: MFA registration (ProofUp) interrupt: skip resume or LoginOptions continue." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 15</b>: MFA registration (ProofUp) interrupt: skip resume or LoginOptions continue.</p>
+<p style="text-align:center"><a href="images/fig-15-proofup.png"><img src="images/fig-15-proofup.png" alt="Figure 15: ProofUp skip-resume and postponement variants." style="max-width:100%"/></a></p>
+<p style="text-align:center"><b>Figure 15</b>: ProofUp skip-resume and postponement variants.</p>
 
-<p style="text-align:center"><a href="images/fig-16-sspr.png"><img src="images/fig-16-sspr.png" alt="Figure 16: Password change (SSPR) sequence." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 16</b>: Password change (SSPR) sequence.</p>
+<p style="text-align:center"><a href="images/fig-16-sspr.png"><img src="images/fig-16-sspr.png" alt="Figure 16: Password-change job and alternative confirmation encodings." style="max-width:100%"/></a></p>
+<p style="text-align:center"><b>Figure 16</b>: Password-change job and alternative confirmation encodings.</p>
 
-<p style="text-align:center"><a href="images/fig-17-autosubmit.png"><img src="images/fig-17-autosubmit.png" alt="Figure 17: Auto-submit HTML interstitial loop." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 17</b>: Auto-submit HTML interstitial loop.</p>
+<p style="text-align:center"><a href="images/fig-17-autosubmit.png"><img src="images/fig-17-autosubmit.png" alt="Figure 17: Bounded continuation-form handling." style="max-width:100%"/></a></p>
+<p style="text-align:center"><b>Figure 17</b>: Bounded continuation-form handling.</p>
 
 ### 1.3.12 Federated Identities
 
-When GetCredentialType returns `Credentials.FederationRedirectUrl`, ESTS
-expects a browser redirect to an external IdP. The SAS / Remote NGC APIs in
-this document do not complete that federation handshake. Clients that cannot
-follow the federated redirect MUST use a different grant (for example the
-device authorization grant in [§2.19](#219-oauth-20-device-authorization-grant)).
+`Credentials.FederationRedirectUrl` directs primary authentication to an
+external IdP. IdP credential collection and assertion creation are outside
+ESTS. The federated result can return to ESTS rather than requiring a new
+OAuth grant.
 
-<p style="text-align:center"><a href="images/fig-18-consumers-federated.png"><img src="images/fig-18-consumers-federated.png" alt="Figure 18: Personal account and federated identity handling." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 18</b>: Personal account and federated identity handling.</p>
+For the WS-Federation return path, the eSTS receiving endpoint is
+`https://{authority-host}/login.srf` on the authority origin, without a tenant
+path prefix. Submit the returned sign-in form using the upstream
+[WS-Federation passive requestor protocol](https://docs.oasis-open.org/wsfed/federation/v1.2/os/ws-federation-1.2-spec-os.html)
+message format; preserve the returned assertion and context rather than
+constructing new values. Preserve applicable ESTS cookies across this return.
 
-### 1.3.13 Device Authorization Grant (Browser on Another Device)
+The response can deliver an authorization response, an interstitial, an
+interrupt, or ConvergedTFA with `arrUserProofs`. In the last case, use the new
+MFA page state and the same SAS, FIDO, or TAP paths described for password
+sign-in. A federated assertion does not universally remove the need for an
+ESTS MFA challenge. An unsupported IdP interaction may require external
+browser interaction or an optional upstream alternative (§2.19).
 
-As an alternate interactive MFA channel, ESTS supports RFC 8628 device
-authorization at `/oauth2/v2.0/devicecode` and `/oauth2/v2.0/token`
-([§2.19](#219-oauth-20-device-authorization-grant)). The user completes MFA in
-a browser at the verification URI. Organizational and consumers
-(`login.microsoftonline.com/consumers`) variants exist.
+<p style="text-align:center"><a href="images/fig-18-consumers-federated.png"><img src="images/fig-18-consumers-federated.png" alt="Figure 18: Federated return to ESTS and external account routing." style="max-width:100%"/></a></p>
+<p style="text-align:center"><b>Figure 18</b>: Federated return to ESTS and external account routing.</p>
 
-<p style="text-align:center"><a href="images/fig-19-device-code.png"><img src="images/fig-19-device-code.png" alt="Figure 19: OAuth 2.0 device authorization grant sequence." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 19</b>: OAuth 2.0 device authorization grant sequence.</p>
+### 1.3.13 Device Authorization Grant (External Alternative)
 
-### 1.3.14 Forcing NGC MFA on Authorize
+For an alternate OAuth flow, see the upstream references in §2.19. Its
+verification and token polling are outside the ESTS interaction described here.
 
-The v1 authorize endpoint accepts `amr_values=ngcmfa`, which requests that
-ESTS require NGC MFA for the authentication. This request does not override
-Conditional Access or other tenant restrictions. The parameter is not listed
-in public parameter tables; its v2.0 behavior is unverified. See
-[§2.2.2](#222-v1-and-v2-authorize-differences).
-Password-change sign-ins omit it ([§2.17](#217-password-change-sspr)).
+### 1.3.14 Requesting MFA on Authorize
+
+The v1 ESTS entry accepts `amr_values=ngcmfa` to request MFA. This is a
+request for an authentication outcome, not a command to choose Remote NGC
+or to trigger a fresh push regardless of existing session state. Tenant policy
+still determines the permitted methods and authentication strength.
+
+The parameter is also defined in
+[MS-OAPX §2.2.2.10](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-oapx/0fc398ca-88d0-4118-ae60-c3033e396e60)
+for AD FS. That upstream definition does not by itself establish every value
+or precedence rule for ESTS; this document specifies only the ESTS use above.
 
 ## 1.4 Completeness of Field Descriptions
 
-Request and response field sets for the Remote NGC and password plus SAS
-paths are given in full. For the FIDO, Temporary Access Pass, PhoneAppOTP /
-SMS / voice SAS, KMSI and ProofUp continue, SSPR and consumers device-code
-paths, the fields listed are those a client needs to send and consume; ESTS
-responses on those paths MAY carry additional fields that a client ignores.
-Values shown in examples (GUIDs, tokens, timings) are representative, not
-mandated. Figures 1–24 illustrate each path as sequence diagrams or flow
-charts ([§7](#7-appendix-figure-index)); where a figure and the text differ,
-the text is normative.
+The request fields and response members needed for each ESTS operation are
+described below. Responses may contain additional fields; ignore fields not
+consumed by the exchange and do not require optional example metadata. A
+request pattern does not establish that arbitrary field combinations work.
+
+Examples and Figures 1–23 illustrate the exchanges. GUIDs, opaque values,
+HTML serialization, and timings are representative, not constants. The
+endpoint-specific text defines state selection and failure handling.
+
 
 # 2 Protocol Details
 
 <a id="21-federation-provider-discovery"></a>
 
-## 2.1 Federation Provider Discovery
+## 2.1 Authority Discovery (External Prerequisite)
 
-### 2.1.1 federationProvider
-
-#### 2.1.1.1 GET
-
-This method is transported by an HTTP GET.
-
-##### 2.1.1.1.1 Request
-
-<pre><code>GET https://odc.officeapps.live.com/odc/v2.1/federationProvider?domain={domain}
-</code></pre>
-
-`domain` is the DNS suffix of the user principal name (the part after `@`).
-
-##### 2.1.1.1.2 Response Body
-
-On success the response is `200` with `Content-Type: application/json` and a
-body of the form:
-
-<pre><code class="lang-json">{
-  "environment": "Global",
-  "endpoint": [
-    {
-      "type": "MSA",
-      "authentication_endpoint": "https://login.live.com/oauth20_authorize.srf",
-      "token_endpoint": "https://login.live.com/oauth20_token.srf"
-    },
-    {
-      "type": "OrgId",
-      "authentication_endpoint": "https://login.microsoftonline.com/common/oauth2/authorize",
-      "token_endpoint": "https://login.microsoftonline.com/common/oauth2/token"
-    }
-  ],
-  "tenantId": "string (GUID)",
-  "authority_host": "login.microsoftonline.com",
-  "graph": "https://graph.microsoft.com"
-}
-</code></pre>
-
-__tenantId__: The Entra ID tenant GUID for the domain. Used to build
-tenant-scoped ESTS URLs.
-
-__endpoint__: Authentication and token endpoints for Microsoft account (MSA)
-and organizational (OrgId) identities.
-
-##### 2.1.1.1.3 Processing Details
-
-For organizational MFA the client SHOULD use `tenantId` and
-`authority_host` from this response when constructing subsequent ESTS
-requests. The OrgId authorize and token endpoints listed here are the
-common (`/common`) variants; tenant-scoped URLs of the form
-`https://{authority_host}/{tenantId}/...` are also valid and are used
-in MFA flows.
+Select the tenant and cloud authority before starting ESTS interaction.
+[Microsoft authority and tenant guidance](https://learn.microsoft.com/en-us/entra/identity-platform/msal-client-application-configuration#authority)
+describes the public authority choices. Optional Office federation-provider
+discovery is an external service, not an ESTS MFA exchange, and its HTTP
+contract is outside this specification. Federation realm discovery and a
+federated return to ESTS are distinct operations (§1.3.12).
 
 <a id="22-oauth-20-authorize-and-auth-config-discovery"></a>
 
@@ -634,42 +609,28 @@ This method is transported by an HTTP GET to ESTS.
 <pre><code>GET https://login.microsoftonline.com/{tenant}/oauth2/authorize?{query}
 </code></pre>
 
-Query parameters:
+An upstream OAuth authorization request enters the ESTS page interaction.
+This document describes the v1 `/{tenant}/oauth2/authorize` entry point with
+`response_type=code`. Standard request parameters and response validation are
+specified by [RFC 6749 §4.1](https://www.rfc-editor.org/rfc/rfc6749#section-4.1),
+[OpenID Connect Core §3.1](https://openid.net/specs/openid-connect-core-1_0.html#CodeFlowAuth),
+and Microsoft's applicable endpoint documentation (§2.2.2).
+
+The following additional parameters are relevant to ESTS interaction:
 
 <table class="protocol-table"><thead>
-  <tr><th><p>Parameter</p></th><th><p>Required</p></th><th><p>Description</p></th></tr>
+<tr><th><p>Parameter</p></th><th><p>ESTS use</p></th></tr>
 </thead><tbody>
- <tr><td><p>client_id</p></td><td><p>Yes</p></td><td><p>Application (client) ID.</p></td></tr>
- <tr><td><p>response_type</p></td><td><p>Yes</p></td><td><p>MUST be <code>code</code> for the flows in this document.</p></td></tr>
- <tr><td><p>redirect_uri</p></td><td><p>Yes</p></td><td><p>Registered redirect URI. Custom schemes such as
- <code>ms-aadj-redir://auth/drs</code> are accepted for device enrollment clients.</p></td></tr>
- <tr><td><p>client-request-id</p></td><td><p>No</p></td><td><p>Correlation GUID for the client request.</p></td></tr>
- <tr><td><p>prompt</p></td><td><p>No</p></td><td><p>Value <code>login</code> forces interactive credential collection.</p></td></tr>
- <tr><td><p>scope</p></td><td><p>No</p></td><td><p>Space-delimited scopes (for example <code>openid profile</code>).</p></td></tr>
- <tr><td><p>response_mode</p></td><td><p>No</p></td><td><p>Value <code>query</code> returns the response parameters in the redirect query string.</p></td></tr>
- <tr><td><p>sso_reload</p></td><td><p>No</p></td><td><p>Value <code>True</code> is sent on v1 authorize requests.</p></td></tr>
- <tr><td><p>resource</p></td><td><p>No</p></td><td><p>v1 resource identifier (for example
- <code>https://enrollment.manage.microsoft.com/</code>). Used with the v1 authorize
- endpoint.</p></td></tr>
- <tr><td><p>caller_app_client_id</p></td><td><p>No</p></td><td><p>Calling application client ID when acting as a broker.</p></td></tr>
- <tr><td><p>caller_app_redirect_uri</p></td><td><p>No</p></td><td><p>Calling application redirect URI when acting as a broker.</p></td></tr>
- <tr><td><p>amr_values</p></td><td><p>No</p></td><td><p>When set to <code>ngcmfa</code>, ESTS is requested to require NGC MFA claims
- in the resulting authentication. Supported on v1 only (see
- <a href="#222-v1-and-v2-authorize-differences">§2.2.2</a>).</p></td></tr>
- <tr><td><p>login_hint</p></td><td><p>No</p></td><td><p>Pre-fills the username.</p></td></tr>
- <tr><td><p>domain_hint</p></td><td><p>No</p></td><td><p>Skips email-based realm discovery (v2.0).</p></td></tr>
- <tr><td><p>state</p></td><td><p>No</p></td><td><p>Opaque value returned unchanged on the redirect.</p></td></tr>
- <tr><td><p>code_challenge / code_challenge_method</p></td><td><p>No</p></td><td><p>PKCE parameters. Where supported, use <code>S256</code> and send the matching <code>code_verifier</code> at the token endpoint. The v1 examples below omit PKCE; v1 support has not been established here.</p></td></tr>
+<tr><td><p>client-request-id</p></td><td><p>Client correlation GUID; also used by discovery requests.</p></td></tr>
+<tr><td><p>sso_reload</p></td><td><p><code>True</code> occurs on interactive v1 entry requests; not an MFA proof.</p></td></tr>
+<tr><td><p>caller_app_client_id / caller_app_redirect_uri</p></td><td><p>Calling application identifiers in brokered requests; not required for direct clients.</p></td></tr>
+<tr><td><p>amr_values</p></td><td><p><code>ngcmfa</code> requests MFA on the v1 entry path; §1.3.14 describes its boundary with upstream extensions.</p></td></tr>
 </tbody></table>
 
-`{tenant}` is a tenant GUID, `common`, `organizations`, `consumers`, or a
-verified domain name.
-
-A `scope` value of `openid profile ` (note the trailing space) is accepted;
-ESTS preserves it in the form-encoded `scope=openid+profile+` reproduced
-inside `urlTenantedEndpointFormat` ([§2.3.1](#231-common-fields)).
-The observed initial authorize request sends `User-Agent`, `Accept: */*`, and
-`Host`, with no cookies because the example starts with an empty cookie jar.
+MFA requirements depend on the target resource, request, existing session,
+and tenant policy. No particular application ID, redirect URI, or scope
+ordering is required by the MFA APIs. A browser User-Agent can affect the
+capabilities advertised by ESTS (§2.20).
 
 ##### 2.2.1.1.2 Response Body
 
@@ -687,22 +648,9 @@ $Config={...JSON object...};
 //]]&gt;&lt;/script&gt;
 </code></pre>
 
-That is: `//<![CDATA[` and a line feed, the literal `$Config=`, a single JSON
-object, then `;`, a line feed, `//]]>` and `</script>`. Notes:
-
-- The HTML document contains several other `<script>` elements, additional
-  `//]]>` markers outside the Auth Config element, and further occurrences of
-  the token `$Config` (inside page script that reads the object), but exactly
-  one `$Config=` assignment.
-- The JSON object uses `\u0026` for `&`. A standard JSON parser decodes these; a client that
-  extracts URLs by other means MUST decode them.
-- The Auth Config is large: on the order of 200 top-level keys on
-  ConvergedSignIn and 100 to 160 on ConvergedTFA and ConvergedProofUpRedirect.
-  Most keys are
-  UI feature flags (`fEnable*`) and string tables; the keys a non-browser
-  client consumes are listed in [§2.3](#23-auth-config-config).
-- The HTML body begins with CRLF-separated whitespace and a comment, followed
-  by `<!DOCTYPE html>`.
+The script wrapper is an example, not a fixed extraction delimiter. Other
+script elements and references to `$Config` can occur in the page. JSON
+escapes such as `\u0026` in URLs are decoded by the JSON parser.
 
 ##### 2.2.1.1.3 Processing Details
 
@@ -719,8 +667,8 @@ The client MUST:
 
 Initial authorize responses include `sErrorCode: "50058"` and
 `arrValErrs: ["50058"]` (user not signed in) on ConvergedSignIn. That value describes page state for the HTML UI and MUST NOT be
-treated as fatal at this step. The same fields on later pages carry real
-failures (see [§2.21](#221-error-signaling)).
+treated as fatal at this step. On later pages, interpret error fields together with page
+state and advertised actions (§2.21).
 
 The authorize response also sets the initial cookie set described in
 [§2.20](#220-session-cookies-and-response-headers) and returns the first
@@ -728,84 +676,26 @@ The authorize response also sets the initial cookie set described in
 
 <a id="222-v1-and-v2-authorize-differences"></a>
 
-### 2.2.2 v1 and v2 Authorize Differences
+### 2.2.2 OAuth Endpoint Versions (Upstream)
 
-The interactive MFA API in this document is specified against the v1
-authorize endpoint (`/{tenant}/oauth2/authorize`). The table below lists the
-differences between the v1 and v2.0 (`/oauth2/v2.0/authorize`) endpoints that
-affect a non-browser client.
+The interactive exchanges in this specification use the v1 authorize entry
+point; follow-on URLs come from the current Auth Config rather than being
+constructed by adding an OAuth endpoint-version suffix. Do not infer v2
+support for an ESTS extension from the existence of a v2 OAuth endpoint.
+For the documented authorization and token contracts, consult
+[Microsoft's v1 OAuth protocol](https://learn.microsoft.com/en-us/previous-versions/azure/active-directory/azuread-dev/v1-protocols-oauth-code)
+and [v2 authorization-code flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow).
 
-<table class="protocol-table"><thead>
-  <tr><th><p>Aspect</p></th><th><p>v1 (<code>/oauth2/authorize</code>)</p></th><th><p>v2.0 (<code>/oauth2/v2.0/authorize</code>)</p></th></tr>
-</thead><tbody>
- <tr><td><p>Authorize path</p></td><td><p><code>/{tenant}/oauth2/authorize</code></p></td><td><p><code>/{tenant}/oauth2/v2.0/authorize</code>. Path matching is case-insensitive (<code>oAuth2/v2.0/authorize</code> is accepted).</p></td></tr>
- <tr><td><p>Token path</p></td><td><p><code>/{tenant}/oauth2/token</code></p></td><td><p><code>/{tenant}/oauth2/v2.0/token</code></p></td></tr>
- <tr><td><p>Device code path</p></td><td><p>Not applicable.</p></td><td><p><code>/{tenant}/oauth2/v2.0/devicecode</code>; consumers: <code>/consumers/oauth2/v2.0/devicecode</code></p></td></tr>
- <tr><td><p>Target API selector</p></td><td><p><code>resource</code>: App ID URI of the target API (for example <code>https://enrollment.manage.microsoft.com/</code>). Required in either the authorize or the token request. Omission does not establish that MFA or Conditional Access is inapplicable; requirements depend on the request, resource, and tenant policy.</p></td><td><p><code>scope</code>: space-delimited, resource-qualified scopes (for example <code>https://graph.microsoft.com/mail.read</code>, or <code>{resource}/.default</code>). <code>resource</code> is not part of the documented parameter set.</p></td></tr>
- <tr><td><p><code>scope</code> parameter</p></td><td><p>API permissions for v1 applications are statically configured; OpenID Connect scopes request identity information. A v1 request MAY nevertheless send <code>scope=openid profile </code> alongside <code>resource</code>; it is accepted, and the token response <code>scope</code> carries the granted permissions (for example <code>mdm_delegation</code>).</p></td><td><p>Required. Determines both the consent and the resource of the issued access token. The <code>/token</code> request MAY repeat <code>scope</code> to name a single resource.</p></td></tr>
- <tr><td><p><code>redirect_uri</code></p></td><td><p>Required for the flows in this document. A custom scheme (<code>ms-aadj-redir://auth/drs</code>) is accepted for the enrollment client and the code is returned on that URI.</p></td><td><p>Required; MUST match a registered value exactly.</p></td></tr>
- <tr><td><p><code>prompt</code> values</p></td><td><p><code>login</code>, <code>select_account</code>, <code>consent</code>, <code>admin_consent</code>.</p></td><td><p><code>login</code>, <code>none</code>, <code>consent</code>, <code>select_account</code>. <code>none</code> returns <code>login_required</code> / <code>interaction_required</code> rather than an Auth Config page.</p></td></tr>
- <tr><td><p><code>sso_reload</code>, <code>caller_app_client_id</code>, <code>caller_app_redirect_uri</code></p></td><td><p>Accepted. Not listed in public parameter tables.</p></td><td><p>Not publicly documented for v2.0; behavior is unverified.</p></td></tr>
- <tr><td><p><code>amr_values=ngcmfa</code></p></td><td><p>Requests NGC MFA; does not override tenant policy. Not listed in public parameter tables. When it is omitted, ESTS still issues <code>amr: ["pwd","mfa"]</code> if the sign-in required MFA by policy.</p></td><td><p>Not publicly documented for v2.0; behavior is unverified.</p></td></tr>
- <tr><td><p><code>state</code>, <code>nonce</code>, PKCE</p></td><td><p><code>state</code> is supported; PKCE support on v1 has not been established by this document.</p></td><td><p><code>state</code>, <code>nonce</code> (OpenID Connect), <code>code_challenge</code>, <code>code_challenge_method</code> are supported. PKCE is required for SPA redirect URIs.</p></td></tr>
- <tr><td><p>Interactive endpoints after authorize</p></td><td><p>GetCredentialType, GetOneTimeCode, DeviceCodeStatus, <code>login</code>, SAS BeginAuth / EndAuth / ProcessAuth, <code>resume</code> are addressed by URLs inside the Auth Config; some URLs may be root-relative. None of them carries an endpoint-version marker.</p></td><td><p>The v2.0 authorize endpoint supports interactive sign-in as well as silent requests. Equivalence of its internal Auth Config fields and the v1 fields documented here has not been verified.</p></td></tr>
- <tr><td><p>Auth Config echo of the request</p></td><td><p><code>urlTenantedEndpointFormat</code> reproduces the v1 authorize URL with <code>{0}</code> in place of the tenant, appends <code>allowbacktocommon=True</code>, and keeps the original parameter order and encoding (<code>%3a%2f%2f</code> lower-case hex).</p></td><td><p>Not specified.</p></td></tr>
- <tr><td><p>Authorization response</p></td><td><p><code>302</code> to <code>redirect_uri</code> with <code>code</code> and <code>session_state</code> (a GUID; it equals the <code>sid</code> claim of the issued tokens); errors as <code>error</code> / <code>error_description</code> on the redirect URI.</p></td><td><p>Both versions echo <code>state</code> when supplied; v2.0 also supports <code>response_mode</code> <code>query</code>, <code>fragment</code>, <code>form_post</code>.</p></td></tr>
- <tr><td><p>Token request fields</p></td><td><p><code>client_id</code>, <code>grant_type</code>, <code>code</code>, <code>redirect_uri</code>. <code>resource</code> is optional when it was sent to authorize. The request MAY omit <code>resource</code>, <code>scope</code>, <code>client-request-id</code> and <code>code_verifier</code>.</p></td><td><p><code>client_id</code>, <code>grant_type</code>, <code>code</code>, <code>redirect_uri</code>, optional <code>scope</code>, <code>code_verifier</code> when PKCE was used.</p></td></tr>
- <tr><td><p>Token response</p></td><td><p>Numbers are JSON strings: <code>expires_in</code>, <code>ext_expires_in</code>, <code>expires_on</code>, <code>not_before</code>. Includes <code>resource</code> and <code>scope</code> (granted permissions). A refresh token and an ID token are returned for requested scope <code>openid profile</code> (no <code>offline_access</code> is needed).</p></td><td><p><code>expires_in</code> is a JSON number. No <code>resource</code>, <code>expires_on</code>, <code>not_before</code>. <code>scope</code> echoes granted scopes. <code>refresh_token</code> only with <code>offline_access</code>; <code>id_token</code> only with <code>openid</code>.</p></td></tr>
- <tr><td><p>Access token version</p></td><td><p>Not determined by the endpoint version. A token issued through the v1 endpoint can have <code>ver: "1.0"</code> and <code>iss</code> of the form <code>https://sts.windows.net/{tid}/</code>.</p></td><td><p>The access token version is selected by the target resource (<code>requestedAccessTokenVersion</code>); either endpoint can issue either version. The issuer of a v2.0 token is <code>https://login.microsoftonline.com/{tid}/v2.0</code>.</p></td></tr>
- <tr><td><p>Error body at <code>/token</code></p></td><td><p><code>error</code>, <code>error_description</code> (begins <code>AADSTS{code}:</code>), <code>error_codes</code>, <code>timestamp</code>, <code>trace_id</code>, <code>correlation_id</code>.</p></td><td><p>Same fields.</p></td></tr>
- <tr><td><p>Silent code request with PRT / device assertions</p></td><td><p>Request headers <code>x-ms-RefreshTokenCredential</code> and <code>x-ms-DeviceCredential</code> carry signed JWT assertions; <code>resource</code> selects the API.</p></td><td><p>Same headers; <code>scope</code> selects the API; <code>redirect_uri</code> and <code>client_id</code> may identify an on-behalf-of client.</p></td></tr>
-</tbody></table>
+<p style="text-align:center"><a href="images/fig-19-v1-v2.png"><img src="images/fig-19-v1-v2.png" alt="Figure 19: ESTS entry, interaction, and upstream OAuth handoff." style="max-width:100%"/></a></p>
+<p style="text-align:center"><b>Figure 19</b>: ESTS entry, interaction, and upstream OAuth handoff.</p>
 
-Unspecified: whether the
-ConvergedSignIn Auth Config served from the v2.0 authorize endpoint
-contains the same `urlGetCredentialType`, `urlGetOneTimeCode`,
-`urlSessionState`, `urlBeginAuth`, `urlEndAuth` and `urlPost` values; whether
-v2.0 honors any equivalent of `amr_values=ngcmfa`; and whether the sessions
-produced from either endpoint are interchangeable at `ProcessAuth` and
-`login`. Clients MUST NOT assume that the internal Auth Config API surface is
-identical across endpoint versions.
+<a id="223-client-identifiers-and-redirect-uris"></a>
 
-<p style="text-align:center"><a href="images/fig-20-v1-v2.png"><img src="images/fig-20-v1-v2.png" alt="Figure 20: v1 and v2.0 endpoints and where each is used." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 20</b>: v1 and v2.0 endpoints and where each is used.</p>
+### 2.2.3 Client Identifiers and Redirect URIs (Upstream)
 
-### 2.2.3 Client Identifiers and Redirect URIs
-
-The `redirect_uri` sent on authorize MUST equal the one sent on the token
-request, and ESTS accepts a registered value per client identifier. The
-pairs below are examples used with this API. They are not a registration
-catalog or a universal redirect-URI selection rule. A client MUST use a URI
-registered for its own application; replace any tenant-specific placeholders
-with actual configured values.
-
-<table class="protocol-table"><thead>
-  <tr><th><p><code>client_id</code></p></th><th><p><code>redirect_uri</code></p></th><th><p>Condition</p></th></tr>
-</thead><tbody>
- <tr><td><p><code>29d9ed98-a469-4536-ade2-f981bc1d605e</code></p></td><td><p><code>ms-aadj-redir://auth/drs</code></p></td><td><p><code>resource</code> contains <code>enrollment.manage.microsoft.com</code></p></td></tr>
- <tr><td><p><code>29d9ed98-a469-4536-ade2-f981bc1d605e</code></p></td><td><p><code>msauth://Microsoft.AAD.BrokerPlugin</code></p></td><td><p>any other <code>resource</code></p></td></tr>
- <tr><td><p><code>b743a22d-6705-4147-8670-d92fa515ee2b</code></p></td><td><p><code>companyportal://com.microsoft.CompanyPortal</code></p></td><td><p>sent as <code>caller_app_client_id</code> / <code>caller_app_redirect_uri</code></p></td></tr>
- <tr><td><p><code>1fec8e78-bce4-4aaf-ab1b-5451cc387264</code>, <code>fb78d390-0c51-40cd-8e17-fdbfab77341b</code>, <code>fdd7719f-d61e-4592-b501-793734eb8a0e</code>, <code>a0c73c16-a7e3-4564-9a95-2bdf47383716</code></p></td><td><p><code>https://login.microsoftonline.com/common/oauth2/nativeclient</code></p></td><td><p>Used by these example clients; not a default for unlisted applications</p></td></tr>
- <tr><td><p><code>ab9b8c07-8f02-4f72-87fa-80105867a763</code></p></td><td><p><code>https://login.windows.net/common/oauth2/nativeclient</code></p></td><td><p>Client-specific</p></td></tr>
- <tr><td><p><code>c44b4083-3bb0-49c1-b47d-974e53cbdf3c</code></p></td><td><p><code>https://portal.azure.com/signin/index/?feature.prefetchtokens=true&feature.showservicehealthalerts=true&feature.usemsallogin=true</code></p></td><td><p>Client-specific</p></td></tr>
- <tr><td><p><code>19db86c3-b2b9-44cc-b339-36da233a3be2</code></p></td><td><p><code>https://mysignins.microsoft.com</code></p></td><td><p>Client-specific</p></td></tr>
- <tr><td><p><code>0000000c-0000-0000-c000-000000000000</code></p></td><td><p><code>https://account.activedirectory.windowsazure.com/</code></p></td><td><p>Client-specific</p></td></tr>
- <tr><td><p><code>d3590ed6-52b3-4102-aeff-aad2292ab01c</code></p></td><td><p><code>ms-appx-web://Microsoft.AAD.BrokerPlugin/d3590ed6-52b3-4102-aeff-aad2292ab01c</code></p></td><td><p>Client-specific</p></td></tr>
- <tr><td><p><code>dd762716-544d-4aeb-a526-687b73838a22</code></p></td><td><p><code>ms-appx-web://microsoft.aad.brokerplugin/dd762716-544d-4aeb-a526-687b73838a22</code></p></td><td><p>Client-specific</p></td></tr>
- <tr><td><p><code>9bc3ab49-b65d-410a-85ad-de819febfddc</code></p></td><td><p><code>https://oauth.spops.microsoft.com/</code></p></td><td><p>Client-specific</p></td></tr>
- <tr><td><p><code>3b511579-5e00-46e1-a89e-a6f0870e2f5a</code></p></td><td><p><code>https://windows365.microsoft.com/signin-oidc</code></p></td><td><p>Client-specific</p></td></tr>
- <tr><td><p><code>4765445b-32c6-49b0-83e6-1d93765276ca</code></p></td><td><p><code>https://www.office.com/landingv2</code></p></td><td><p>Client-specific</p></td></tr>
- <tr><td><p><code>33be1cef-03fb-444b-8fd3-08ca1b4d803f</code></p></td><td><p><code>https://admin.onedrive.com/</code></p></td><td><p>Client-specific</p></td></tr>
- <tr><td><p><code>3d5cffa9-04da-4657-8cab-c7f074657cad</code></p></td><td><p><code>http://localhost/m365/commerce</code></p></td><td><p>Client-specific</p></td></tr>
- <tr><td><p><code>4990cffe-04e8-4e8b-808a-1175604b879f</code></p></td><td><p><code>https://partner.microsoft.com/aad/authPostGateway</code></p></td><td><p>Client-specific</p></td></tr>
- <tr><td><p><code>0c1307d4-29d6-4389-a11c-5cbe7f65d7fa</code></p></td><td><p><code>https://azureapp</code></p></td><td><p>Client-specific</p></td></tr>
- <tr><td><p><code>08e18876-6177-487e-b8b5-cf950c1e598c</code></p></td><td><p><code>https://*-admin.sharepoint.com/_forms/spfxsinglesignon.aspx</code></p></td><td><p>Client-specific</p></td></tr>
-</tbody></table>
-
-An interactive-browser variant of the v1 request uses
-`redirect_uri=https://login.microsoftonline.com/applebroker/msauth`,
-`login_hint`, `response_mode=query`, `resource` and `amr_values=ngcmfa`, and
-reads the code from the final navigation URL.
+Use the identifiers and registered redirect URI of the requesting application.
+Application registration and redirect validation are governed by the upstream
+OAuth contract; they are not a method-selection mechanism in ESTS MFA.
 
 <a id="23-auth-config-config"></a>
 
@@ -822,15 +712,12 @@ Intermediate auto-submit pages may instead contain only a continuation form.
 <table class="protocol-table"><thead>
   <tr><th><p>Field</p></th><th><p>Type</p></th><th><p>Description</p></th></tr>
 </thead><tbody>
- <tr><td><p>sessionId</p></td><td><p>string</p></td><td><p>ESTS session identifier. Used as <code>x-ms-sessionId</code> on SAS
- EndAuth polling. On every page that carries an Auth Config (ConvergedSignIn, ConvergedTFA, ConvergedProofUpRedirect) it is
- equal to the <code>x-ms-request-id</code> response header of the response that rendered the page, so it changes on every
- Auth Config page.</p></td></tr>
+ <tr><td><p>sessionId</p></td><td><p>string</p></td><td><p>Page session identifier; used by the retained-state polling pattern. Can differ from SAS <code>SessionId</code>. Do not substitute a server trace ID for this field (§2.3.4).</p></td></tr>
  <tr><td><p>sFT</p></td><td><p>string</p></td><td><p>Flow token. Posted as <code>flowToken</code>.</p></td></tr>
  <tr><td><p>sFTName</p></td><td><p>string</p></td><td><p>Form field name for the flow token (value <code>flowToken</code>).</p></td></tr>
  <tr><td><p>sCtx</p></td><td><p>string</p></td><td><p>Flow context. Posted as <code>ctx</code> or <code>request</code>.</p></td></tr>
  <tr><td><p>canary</p></td><td><p>string</p></td><td><p>Request validation token.</p></td></tr>
- <tr><td><p>apiCanary</p></td><td><p>string</p></td><td><p>Alternate canary used by some ESTS instrumentation APIs.</p></td></tr>
+ <tr><td><p>apiCanary</p></td><td><p>string</p></td><td><p>API request-validation token; used as the SAS <code>canary</code> header in an alternative request form (§2.9).</p></td></tr>
  <tr><td><p>correlationId</p></td><td><p>string</p></td><td><p>Correlation GUID.</p></td></tr>
  <tr><td><p>sTenantId</p></td><td><p>string</p></td><td><p>Tenant GUID.</p></td></tr>
  <tr><td><p>pgid</p></td><td><p>string</p></td><td><p>Page identifier describing the current interrupt. See
@@ -840,22 +727,22 @@ Intermediate auto-submit pages may instead contain only a continuation form.
  <code>https://login.microsoftonline.com/common/GetCredentialType?mkt=en-US</code>.</p></td></tr>
  <tr><td><p>urlGetOneTimeCode</p></td><td><p>string</p></td><td><p>URL for GetOneTimeCode.</p></td></tr>
  <tr><td><p>urlSessionState</p></td><td><p>string</p></td><td><p>URL for DeviceCodeStatus polling.</p></td></tr>
- <tr><td><p>urlBeginAuth</p></td><td><p>string</p></td><td><p>URL for SAS BeginAuth. Present after password MFA interrupt.</p></td></tr>
- <tr><td><p>urlEndAuth</p></td><td><p>string</p></td><td><p>URL for SAS EndAuth. Present after password MFA interrupt.</p></td></tr>
- <tr><td><p>arrUserProofs</p></td><td><p>array</p></td><td><p>Available MFA methods after password validation. See
+ <tr><td><p>urlBeginAuth</p></td><td><p>string</p></td><td><p>URL for SAS BeginAuth. Present on a SAS MFA page.</p></td></tr>
+ <tr><td><p>urlEndAuth</p></td><td><p>string</p></td><td><p>URL for SAS EndAuth. Present on a SAS MFA page.</p></td></tr>
+ <tr><td><p>arrUserProofs</p></td><td><p>array</p></td><td><p>Available MFA methods after primary authentication. See
  <a href="#232-arruserproofs">§2.3.2</a>.</p></td></tr>
- <tr><td><p>iMaxPollAttempts</p></td><td><p>number</p></td><td><p>Maximum EndAuth poll attempts (<code>10</code> on ConvergedTFA).</p></td></tr>
+ <tr><td><p>iMaxPollAttempts</p></td><td><p>number</p></td><td><p>Maximum EndAuth poll attempts when advertised (for example <code>10</code>).</p></td></tr>
  <tr><td><p>iPollingInterval</p></td><td><p>number</p></td><td><p>Polling interval. On ConvergedTFA this is milliseconds (value
  <code>5000</code>; clients poll EndAuth about every 5.1–5.3 s). On ConvergedSignIn
  the value is <code>1</code> and the page does not state a unit; clients poll DeviceCodeStatus
  about every 5.1 s and ESTS accepts that cadence.</p></td></tr>
  <tr><td><p>urlSkipMfaRegistration</p></td><td><p>string</p></td><td><p>Resume URL that skips MFA method registration interrupt.</p></td></tr>
  <tr><td><p>iRemainingDaysToSkipMfaRegistration</p></td><td><p>number</p></td><td><p>Remaining days allowed to postpone MFA registration, when present.</p></td></tr>
- <tr><td><p>sErrorCode</p> / <p>iErrorCode</p></td><td><p>string / number</p></td><td><p>AADSTS-style error when the page represents a failure or interrupt.</p></td></tr>
+ <tr><td><p>sErrorCode</p> / <p>iErrorCode</p></td><td><p>string / number</p></td><td><p>Error or interrupt identifier. <code>sErrorCode</code> can be a numeric string or a symbolic value such as <code>InvalidAccessPass</code>.</p></td></tr>
  <tr><td><p>sErrTxt</p> / <p>strServiceExceptionMessage</p></td><td><p>string</p></td><td><p>Human-readable error text when present.</p></td></tr>
- <tr><td><p>urlFidoLogin</p></td><td><p>string</p></td><td><p>FIDO challenge bootstrap endpoint when FIDO is offered; the resulting page advertises the assertion endpoint in <code>urlPost</code>.</p></td></tr>
+ <tr><td><p>urlFidoLogin</p></td><td><p>string</p></td><td><p>FIDO challenge bootstrap endpoint when FIDO is offered. Preserve the initiating page's completion endpoint and state as specified in §2.14.</p></td></tr>
  <tr><td><p>sFidoChallenge</p></td><td><p>string</p></td><td><p>FIDO challenge material when present on the sign-in page.</p></td></tr>
- <tr><td><p>arrFidoAllowList</p></td><td><p>array</p></td><td><p>Allowed FIDO credential descriptors when present.</p></td></tr>
+ <tr><td><p>arrFidoAllowList</p></td><td><p>array</p></td><td><p>Array of serialized FIDO allow-list entries when present; the bootstrap <code>credentialsJson</code> carries one entry unchanged.</p></td></tr>
  <tr><td><p>sCrossDomainCanary</p></td><td><p>string</p></td><td><p>Canary used when posting FIDO assertions.</p></td></tr>
  <tr><td><p>fEnableNumberMatching</p></td><td><p>boolean</p></td><td><p>Whether Authenticator number matching is enabled for the tenant UX.</p></td></tr>
  <tr><td><p>sSessionIdentifierName</p></td><td><p>string</p></td><td><p>Value <code>code</code>; names the Remote NGC session form field.</p></td></tr>
@@ -865,20 +752,13 @@ Intermediate auto-submit pages may instead contain only a continuation form.
  <tr><td><p>iRemoteNgcPollingType</p></td><td><p>number</p></td><td><p>Value <code>2</code>. Selects the polling mechanism the page uses for Remote NGC; value <code>2</code> corresponds to <code>urlSessionState</code> DeviceCodeStatus polling.</p></td></tr>
  <tr><td><p>iAllowedIdentities</p></td><td><p>number</p></td><td><p>Value <code>2</code>. Posted as <code>allowedIdentities</code> to <code>urlFidoLogin</code>.</p></td></tr>
  <tr><td><p>urlCancel</p></td><td><p>string</p></td><td><p>The <code>redirect_uri</code> with <code>error=access_denied&amp;error_subcode=cancel</code> appended. Navigating to it is the protocol's cancellation signal.</p></td></tr>
- <tr><td><p>urlLogin / urlRefresh</p></td><td><p>string</p></td><td><p><code>https://login.microsoftonline.com/{tenant}/reprocess?ctx={sCtx}</code>. Replays the current page state. Not used by any path here.</p></td></tr>
  <tr><td><p>urlResume</p></td><td><p>string</p></td><td><p>ConvergedSignIn: <code>…/{tenant}/resume?ctx={sCtx}</code>; ConvergedTFA: <code>…/{tenant}/resume</code> with no query.</p></td></tr>
- <tr><td><p>urlTenantedEndpointFormat</p></td><td><p>string</p></td><td><p>The authorize URL that produced the page with the tenant replaced by <code>{0}</code> and <code>allowbacktocommon=True</code> appended. See <a href="#222-v1-and-v2-authorize-differences">§2.2.2</a>.</p></td></tr>
- <tr><td><p>urlPostAad / urlPostMsa / urlPIAEndAuth / urlStartTlr</p></td><td><p>string</p></td><td><p>Advertised on ConvergedSignIn: <code>urlPostAad</code> equals the tenant <code>login</code> URL; <code>urlPostMsa</code> is a consumer-IdP partner post; <code>urlPIAEndAuth</code> is <code>/common/PIA/EndAuth</code>; <code>urlStartTlr</code> is <code>/{tenant}/tlr/start</code>. None is exercised by a path in this document.</p></td></tr>
  <tr><td><p>browser</p></td><td><p>object</p></td><td><p>ESTS' parse of the request <code>User-Agent</code>: <code>b.name</code>, <code>b.major</code>, <code>os.name</code>, plus capability flags. For example <code>Firefox</code> 131 / <code>Linux</code> for a Firefox 131 user agent string. Server-side capability decisions (for example FIDO) are evaluated against this value.</p></td></tr>
- <tr><td><p>serverDetails</p></td><td><p>object</p></td><td><p>Datacenter (<code>dc</code>), slice, and build (<code>ver.v</code> = <code>[2,1,25449,3]</code>) of the node that rendered the page. Corresponds to the build and slice naming of the <code>x-ms-ests-server</code> response header (<a href="#220-session-cookies-and-response-headers">§2.20</a>).</p></td></tr>
- <tr><td><p>country / locale / sMkt / sRingId / sTenantId</p></td><td><p>mixed</p></td><td><p>For example <code>US</code>, <code>{mkt:"en-US",lcid:1033}</code>, <code>en-US</code>, <code>R4</code>, and the tenant GUID respectively.</p></td></tr>
 </tbody></table>
 
-Only the fields in the table above (plus `sFT`, `sCtx`, `canary`, `sessionId`,
-`urlPost`, `pgid`, error fields and the URL fields) are consumed by a
-non-browser client. The remaining keys (`fEnable*` UI feature flags, `strings`,
-branding, `clientEvents`, `desktopSsoConfig`, `bsso`, `watson`, and others) are
-not needed to construct any request in this document.
+The fields above support these exchanges. Other UI flags, string tables,
+branding, and telemetry fields may be ignored here. Their presence or absence
+does not establish support for a new authentication mechanism.
 
 <a id="232-arruserproofs"></a>
 
@@ -901,6 +781,7 @@ Each element describes one MFA proof the user may satisfy:
   <tr><th><p>authMethodId</p></th><th><p>Challenge style</p></th></tr>
 </thead><tbody>
  <tr><td><p>PhoneAppNotification</p></td><td><p>Authenticator push / number match; poll EndAuth.</p></td></tr>
+ <tr><td><p>CompanionAppsNotification</p></td><td><p>Companion-app approval; poll EndAuth using the selected method ID.</p></td></tr>
  <tr><td><p>PhoneAppOTP</p></td><td><p>TOTP from Authenticator; POST EndAuth with AdditionalAuthData. May
  include <code>phoneAppOtpTypes</code> such as
  <code>MicrosoftAuthenticatorBasedTOTP</code>.</p></td></tr>
@@ -922,13 +803,9 @@ Each element describes one MFA proof the user may satisfy:
 </thead><tbody>
  <tr><td><p>ConvergedSignIn</p></td><td><p>Initial username / password page. Advertises GetCredentialType /
  GetOneTimeCode / DeviceCodeStatus.</p></td></tr>
- <tr><td><p>ConvergedTFA</p></td><td><p>MFA interrupt after password. Advertises urlBeginAuth, urlEndAuth,
+ <tr><td><p>ConvergedTFA</p></td><td><p>MFA interrupt after primary authentication. Advertises urlBeginAuth, urlEndAuth,
  arrUserProofs; urlPost points at ProcessAuth.</p></td></tr>
- <tr><td><p>ConvergedProofUpRedirect</p></td><td><p>MFA method registration campaign interrupt. Typically <code>sErrorCode</code> <code>50203</code>,
- <code>urlSkipMfaRegistration</code> present, <code>sCtx</code> absent, <code>urlPost</code> pointing at a
- different host (<code>https://mysignins.microsoft.com:443/api/post/registerMfaMethods?culture=en-US&amp;requirement=RegistrationCampaign&amp;authMethods=32&amp;authMethodCount=1</code>)
- that implements registration (not specified here), <code>fIsRegistrationCampaignInterrupt</code> and
- <code>fIsFidoRegistrationCampaign</code> true, and no <code>iRemainingDaysToSkipMfaRegistration</code>.</p></td></tr>
+ <tr><td><p>ConvergedProofUpRedirect</p></td><td><p>Registration interrupt. Can advertise a skip URL without remaining-days metadata, or a postponement option. <code>sCtx</code> can be absent; <code>urlPost</code> can point to a separate registration host (§2.13, §2.16).</p></td></tr>
  <tr><td><p>KmsiInterrupt</p></td><td><p>“Keep me signed in” prompt.</p></td></tr>
  <tr><td><p>ConvergedChangePassword</p></td><td><p>Password change required.</p></td></tr>
  <tr><td><p>ConvergedConsent</p></td><td><p>Application consent required.</p></td></tr>
@@ -938,45 +815,45 @@ Each element describes one MFA proof the user may satisfy:
 
 ### 2.3.4 State Token Lineage
 
-ESTS state tokens (`sFT`, `sCtx`, `canary`) are opaque. The table records which
-issued value each request carries, since several JSON
-responses return a `FlowToken` that the next request does **not** use.
+State values are opaque. Retain the page state separately from SAS response
+state and FIDO bootstrap state. Replacing every stored field whenever a
+response arrives loses values needed by later requests. The following table
+specifies the demonstrated request patterns; it does not require a server to
+accept arbitrary mixtures of them.
 
 <table class="protocol-table"><thead>
-  <tr><th><p>Request</p></th><th><p>Field</p></th><th><p>Value taken from</p></th></tr>
+<tr><th><p>Request</p></th><th><p>Values and provenance</p></th></tr>
 </thead><tbody>
- <tr><td><p>GetCredentialType</p></td><td><p><code>flowToken</code>, <code>originalRequest</code></p></td><td><p>authorize <code>$Config.sFT</code>, <code>sCtx</code></p></td></tr>
- <tr><td><p>GetOneTimeCode</p></td><td><p><code>FlowToken</code>, <code>OriginalRequest</code>; header <code>canary</code></p></td><td><p>authorize <code>sFT</code>, <code>sCtx</code>, <code>canary</code> (the identical values sent to GetCredentialType)</p></td></tr>
- <tr><td><p>DeviceCodeStatus</p></td><td><p>header <code>canary</code>; no flow token</p></td><td><p>authorize <code>canary</code></p></td></tr>
- <tr><td><p>login (Remote NGC)</p></td><td><p><code>flowToken</code>, <code>ctx</code>, <code>canary</code>; <code>code</code> and <code>psRNGCSLK</code></p></td><td><p>authorize <code>sFT</code>, <code>sCtx</code>, <code>canary</code>; the <code>SessionIdentifier</code> returned by GetCredentialType (byte-identical to the one returned by GetOneTimeCode)</p></td></tr>
- <tr><td><p>login (password)</p></td><td><p><code>flowToken</code>, <code>ctx</code>, <code>canary</code></p></td><td><p>authorize <code>sFT</code>, <code>sCtx</code>, <code>canary</code>. The <code>FlowToken</code> and <code>apiCanary</code> returned by GetCredentialType were not used. <code>client-request-id</code> was a fresh GUID, different from the authorize <code>client-request-id</code>.</p></td></tr>
- <tr><td><p>BeginAuth</p></td><td><p><code>flowToken</code>, <code>ctx</code>; header <code>canary</code></p></td><td><p>ConvergedTFA <code>sFT</code>, <code>sCtx</code>, <code>canary</code></p></td></tr>
- <tr><td><p>EndAuth (poll)</p></td><td><p>headers <code>x-ms-flowToken</code>, <code>x-ms-ctx</code></p></td><td><p>The BeginAuth response <code>FlowToken</code> and <code>Ctx</code>, identical on all eight polls. Each pending response returned a different <code>FlowToken</code> (eight distinct values); none was used.</p></td></tr>
- <tr><td><p>EndAuth (poll)</p></td><td><p>header <code>x-ms-sessionId</code></p></td><td><p>ConvergedTFA <code>$Config.sessionId</code> (not the SAS JSON <code>SessionId</code>)</p></td></tr>
- <tr><td><p>ProcessAuth</p></td><td><p><code>flowToken</code>, <code>request</code>, <code>canary</code></p></td><td><p>The final (successful) EndAuth response <code>FlowToken</code> and <code>Ctx</code>; ConvergedTFA <code>canary</code></p></td></tr>
- <tr><td><p>resume (skip MFA registration)</p></td><td><p><code>flowtoken</code>, <code>canary</code></p></td><td><p>ConvergedProofUpRedirect <code>sFT</code> and <code>canary</code></p></td></tr>
- <tr><td><p>resume (skip MFA registration)</p></td><td><p><code>ctx</code></p></td><td><p>The <code>request</code> value that was posted to ProcessAuth (the ProofUp Auth Config carries no <code>sCtx</code>)</p></td></tr>
- <tr><td><p>token</p></td><td><p><code>code</code></p></td><td><p>The <code>code</code> on the final redirect <code>Location</code></p></td></tr>
+<tr><td><p>GetCredentialType</p></td><td><p><code>flowToken=sFT</code>, <code>originalRequest=sCtx</code> from the entry page.</p></td></tr>
+<tr><td><p>GetOneTimeCode</p></td><td><p>Entry-page <code>sFT</code>, <code>sCtx</code>, and <code>canary</code>; discovery's Remote NGC identifier as <code>OldDeviceCode</code>.</p></td></tr>
+<tr><td><p>DeviceCodeStatus</p></td><td><p>Entry-page <code>canary</code>; identifier returned by GetOneTimeCode in both query and body. No flow token or context.</p></td></tr>
+<tr><td><p>login (Remote NGC)</p></td><td><p>Entry-page <code>sFT</code>, <code>sCtx</code>, <code>canary</code>; GetOneTimeCode's identifier and entropy.</p></td></tr>
+<tr><td><p>login (password)</p></td><td><p>Entry-page <code>sFT</code>, <code>sCtx</code>, <code>canary</code>. These paths do not require replacing them with discovery's <code>FlowToken</code> or <code>apiCanary</code>.</p></td></tr>
+<tr><td><p>BeginAuth</p></td><td><p>MFA-page <code>sFT</code> and <code>sCtx</code>; SAS canary-header choice from that page (§2.9).</p></td></tr>
+<tr><td><p>EndAuth GET: retained-state pattern</p></td><td><p>MFA-page <code>sessionId</code> as <code>x-ms-sessionId</code>; BeginAuth <code>FlowToken</code>/<code>Ctx</code> retained across pending polls.</p></td></tr>
+<tr><td><p>EndAuth GET: response-state pattern</p></td><td><p>BeginAuth <code>SessionId</code>/<code>FlowToken</code>/<code>Ctx</code> for the first poll; preceding SAS response values for later polls.</p></td></tr>
+<tr><td><p>EndAuth POST: code entry</p></td><td><p>BeginAuth <code>SessionId</code>/<code>FlowToken</code>/<code>Ctx</code> in the JSON body; SAS canary header (§2.10.2).</p></td></tr>
+<tr><td><p>ProcessAuth</p></td><td><p>Successful EndAuth <code>FlowToken</code> and <code>Ctx</code> as <code>flowToken</code> and <code>request</code>; MFA-page <code>canary</code>.</p></td></tr>
+<tr><td><p>FIDO bootstrap and assertion</p></td><td><p>Keep initiating page state; bootstrap response supplies challenge, cross-domain canary, and completion session ID. See §2.14.</p></td></tr>
+<tr><td><p>ProofUp skip resume</p></td><td><p>ProofUp <code>sFT</code> as lowercase <code>flowtoken</code>, ProofUp <code>canary</code>; preceding ProcessAuth <code>request</code> as <code>ctx</code> when ProofUp lacks <code>sCtx</code>.</p></td></tr>
+<tr><td><p>KMSI / ProofUp postponement</p></td><td><p>Endpoint-specific page and preceding-state selection in §2.16.</p></td></tr>
+<tr><td><p>SSPR</p></td><td><p>Begin with password-change page state, then carry the preceding job response's context, flow token, and routing values (§2.17).</p></td></tr>
 </tbody></table>
 
-Consequences for a conforming server: the authorize-time `sFT` MUST remain
-valid across at least GetCredentialType, GetOneTimeCode and `login` (three
-uses); and a SAS flow token MUST remain valid across repeated EndAuth
-requests that present the BeginAuth value.
+A pending EndAuth response may return a different flow token even when the
+retained-state pattern continues to work. This does not establish that
+pending tokens are universally ignorable. Choose one documented polling
+pattern for a challenge; successful EndAuth values are used for completion
+in either pattern.
 
-`canary` has the form `{base64}={n}:1:CANARY:{base64}`. The leading segment
-(44 characters, ending in `=`) is constant for the whole session
-(for example `gDmLyBKDxQx/…` on ConvergedSignIn, ConvergedTFA and
-ConvergedProofUpRedirect); `n` differs per page (for example 7, 8 and 3
-respectively) and the trailing segment changes on every issue. It contains `/`, `+` and `=` and MUST be
-form-encoded when posted. Typical sizes: `sFT` 1322–1876 characters, `sCtx`
-828–899, authorization `code` 1319–1329. Because EndAuth carries the flow token
-and ctx as request headers, a receiving server or intermediary MUST accept
-single header values of at least ~1.8 kB and total request headers of at least
-~3 kB.
+Canaries and tokens can contain `+`, `/`, and `=`. Preserve their values and
+use the endpoint's JSON or form encoding. Do not parse their internal shape,
+assume fixed lengths, or impose server validity requirements from example
+reuse. EndAuth GET carries potentially large opaque state in headers; clients
+and intermediaries must accommodate those values without truncation.
 
-<p style="text-align:center"><a href="images/fig-21-token-lineage.png"><img src="images/fig-21-token-lineage.png" alt="Figure 21: State token lineage across requests." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 21</b>: State token lineage across requests.</p>
+<p style="text-align:center"><a href="images/fig-20-token-lineage.png"><img src="images/fig-20-token-lineage.png" alt="Figure 20: Page state, alternative SAS polling patterns, and completion state." style="max-width:100%"/></a></p>
+<p style="text-align:center"><b>Figure 20</b>: Page state, alternative SAS polling patterns, and completion state.</p>
 
 <a id="24-getcredentialtype"></a>
 
@@ -1007,8 +884,9 @@ Request headers:
  <tr><td><p>User-Agent / Accept</p></td><td><p>A browser <code>User-Agent</code> string, and <code>*/*</code>. See <a href="#220-session-cookies-and-response-headers">§2.20</a>.</p></td></tr>
 </tbody></table>
 
-Request body (these are the keys ESTS expects; the capability flags are all
-`true` except `isCookieBannerShown`, which is `false`):
+Example request body for a client supporting all illustrated credential paths.
+Set capability flags to match the client; the all-true values below are not
+requirements for every implementation:
 
 <pre><code class="lang-json">{
   "username": "user@contoso.com",
@@ -1072,16 +950,16 @@ parameters.
 
 The example above is the response for a Remote NGC-capable account. The
 response for a password-only
-account differs only in `PrefCredential: 1`, `RemoteNgcParams: null`, and the
-absence of `HasRemoteNGC` and `IsSignupDisallowed`. The following `Credentials` members are present only when applicable
+account can instead return `PrefCredential: 1` and `RemoteNgcParams: null`,
+with `HasRemoteNGC` and `IsSignupDisallowed` absent. The following `Credentials` members are present only when applicable
 and are absent in the example: `HasAccessPass`, `HasFido`,
 `FederationRedirectUrl`. Clients MUST treat an absent member as false/null.
 `IsUnmanaged`, `DfpProperties`, `EstsProperties.DomainType`
 (for example `3`), `Display` and `OtcNotAutoSent` are returned but do not
 influence any later request.
 
-The response sets `fpc` and `x-ms-gateway-slice` cookies and echoes
-`client-request-id`; no `esctx*` cookie is issued by this call.
+Persist cookie updates and retain the returned control fields needed by the
+selected path. Cookie names and diagnostic headers are described in §2.20.
 
 ##### 2.4.1.1.3 Processing Details
 
@@ -1107,11 +985,11 @@ request. A healthy response carries `0`.
 __PrefCredential__: Preferred credential hint. For example `1` with a
 password-only account and `2` with a Remote NGC-capable account.
 See [§1.3.1](#131-path-selection-after-getcredentialtype) for why the numeric
-value MUST NOT be used to select a method.
+value alone MUST NOT be used to infer usable method parameters.
 
 __RemoteNgcParams__: When present, passwordless Authenticator MFA MAY proceed
-via GetOneTimeCode and DeviceCodeStatus. `SessionIdentifier` is the device
-code used in those calls. `Entropy` is the number-match value to display.
+via GetOneTimeCode and DeviceCodeStatus. `SessionIdentifier` identifies the challenge. Use the parameters returned by
+GetOneTimeCode for polling and completion; display its `Entropy`.
 
 __FlowToken__: Flow token returned by GetCredentialType. In the Remote NGC
 and password paths documented here, subsequent requests retain the
@@ -1182,9 +1060,9 @@ Errors MAY appear as:
 
 The returned `SessionIdentifier` MUST be used as `DeviceCode` when polling
 DeviceCodeStatus and as the `code` / `psRNGCSLK` fields when completing login.
-It is byte-identical to the `SessionIdentifier` returned by
-GetCredentialType (`OldDeviceCode` names that session). `Entropy` is also unchanged. `DefaultType` changes from
-`1` to `3`. The request carries `client-request-id` equal to the authorize
+The response can retain the identifier and entropy supplied by discovery,
+but clients MUST use the returned values rather than depend on equality.
+`DefaultType` may differ from its discovery value. The request carries `client-request-id` equal to the authorize
 value and `canary` equal to `$Config.canary`; a `User-Agent` header is not required.
 The first DeviceCodeStatus poll MAY follow GetOneTimeCode immediately.
 
@@ -1248,16 +1126,18 @@ __AuthorizationState__:
 
 ##### 2.6.1.1.3 Processing Details
 
-Clients SHOULD poll on an interval on the order of several seconds until
-`AuthorizationState` is non-zero or a local timeout elapses. No browser or
-UI document execution is required for this poll.
+Clients SHOULD poll at intervals of several seconds until approval, denial,
+a finite local deadline, or cancellation. State `0` means pending only while
+those bounds permit another poll. Any state other than `0`, `1`, or `2` is
+unrecognized: stop and report it; do not interpret it as approval. Transport
+errors and malformed responses are not pending states. Bound transport-error
+retries separately, considering `iMaxPollErrors` when supplied, and do not
+restart the challenge automatically. No browser execution is required.
 
-Example timeline (offsets from the first poll): `0.00 s` state 0,
-`5.11 s` state 0, `10.22 s` state 0, `15.33 s` state 2; the `login` POST follows
-the approving poll immediately. The Auth Config on the sign-in page
-advertises `iPollingTimeout: 300`, `iMaxPollErrors: 5` and
-`iRemoteNgcPollingType: 2` ([§2.3.1](#231-common-fields)). The poll responses
-carry `Set-Cookie` for `fpc` and `x-ms-gateway-slice` only.
+For example, DeviceCodeStatus may be polled about every five seconds.
+Auth Config may advertise `iPollingTimeout`, `iMaxPollErrors`, and
+`iRemoteNgcPollingType`; do not infer undocumented units from example values
+or apply SAS polling units to this page (§2.23).
 
 <a id="27-login-passwordless-remote-ngc-completion"></a>
 
@@ -1303,19 +1183,15 @@ On success ESTS returns `302` with a `Location` header of the form:
 The `redirect_uri` matches the authorize request (for example
 `ms-aadj-redir://auth/drs`).
 
-The `302` response carries the full authenticated cookie set
-([§2.20](#220-session-cookies-and-response-headers)), `Content-Type:
-text/html; charset=utf-8`, and an `x-ms-clientdata` header. The observed form contains
-the eight fields in the table above: no `client_id` and no
-`client-request-id`. The `flowToken`, `ctx` and `canary` values are the
-authorize-time values ([§2.3.4](#234-state-token-lineage)), and `canary` is
-`$Config.canary`, not `apiCanary`.
+Retain applicable cookies from the response. The form uses the entry page's
+`flowToken`, `ctx`, and `canary`, together with GetOneTimeCode's identifier
+and entropy (§2.3.4). Neither a fixed cookie inventory nor trace headers are
+prerequisites for recognizing an authorization response.
 
 ##### 2.7.1.1.3 Processing Details
 
-The client MUST extract the `code` query parameter from `Location` and
-exchange it per [§2.12](#212-authorization-code-token-exchange). Other completion forms
-and interrupts are handled as specified in §2.22. No HTML
+Extract the authorization response using §2.22 and hand it to the upstream
+protocol (§2.12). Other wrappers and interrupts use the same dispatcher. No HTML
 rendering is required.
 
 <a id="28-login-password-submission"></a>
@@ -1358,15 +1234,15 @@ Outcomes:
 1. __MFA required__: `200` HTML with `$Config.pgid` = `ConvergedTFA`,
    including `arrUserProofs`, `urlBeginAuth`, `urlEndAuth`, and
    `urlPost` pointing at `/common/SAS/ProcessAuth`.
-2. __Authorization code__: `302` to `redirect_uri` with `code` when MFA is not
-   required for this request.
+2. __Authorization code__: `302` to `redirect_uri` with `code` when no additional MFA challenge is
+   needed (including an already sufficient session).
 3. __Other interrupts__: `200` HTML with `pgid` values such as
    `KmsiInterrupt`, `ConvergedChangePassword`, or `ConvergedConsent`.
 
 ESTS MAY also return intermediate HTML pages that auto-submit a form
 (“Working…”, “Click Submit to continue”). Clients MUST parse the form
-`action` and hidden inputs and POST them until a terminal Auth Config or
-redirect is obtained.
+`action` and continuation inputs, applying §2.18 and §2.22, including
+continuation bounds.
 
 ##### 2.8.1.1.3 Processing Details
 
@@ -1374,22 +1250,16 @@ After a ConvergedTFA response, the client MUST parse the new `$Config` and
 select a supported method from `arrUserProofs`. SAS methods use BeginAuth /
 EndAuth; FidoKey and AccessPass follow [§2.14](#214-fido-authentication) and
 [§2.15](#215-temporary-access-pass-completion), respectively. Cookies from this response
-(including authentication cookies such as `ESTSAUTH`) MUST be retained. In
-fact, the ConvergedTFA response already carries `ESTSAUTH`,
-`ESTSAUTHPERSISTENT` and `ESTSAUTHLIGHT`, before MFA is satisfied
+(including authentication cookies such as `ESTSAUTH`) MUST be retained. The ConvergedTFA response can carry `ESTSAUTH`,
+`ESTSAUTHPERSISTENT`, or `ESTSAUTHLIGHT` before MFA is satisfied
 ([§2.20](#220-session-cookies-and-response-headers)).
 
-The observed form contains the seven fields in the table above, in
-the order `login`, `passwd`, `ctx`, `flowToken`, `canary`, `client_id`,
-`client-request-id`. Unlike the Remote NGC `login`, a `client-request-id` is
-posted and is a new GUID rather than the authorize value. The new
-ConvergedTFA Auth Config contains `sessionId`, `sFT`, `sCtx`, `canary`
-(`…=8:1:CANARY:…`), `arrUserProofs`, `urlBeginAuth`, `urlEndAuth`,
-`urlPost` (ProcessAuth), `urlResume` (no query), `iMaxPollAttempts: 10`,
-`iPollingInterval: 5000`, and no `sErrorCode`. Incorrect-password,
-locked-account, and similar failures are delivered as HTML with an Auth Config
-whose error fields describe the failure; do not assume that `pgid` is
-ConvergedTFA ([§2.21](#221-error-signaling)).
+A successful primary-authentication response can supply a new MFA page
+with `sessionId`, `sFT`, `sCtx`, `canary`, `arrUserProofs`, and SAS endpoint
+URLs. Use that page for the next challenge. Correlation GUIDs and form-field
+order are not authentication state. Incorrect-password and account failures
+are delivered through Auth Config error fields; do not assume ConvergedTFA
+merely because the response is HTML (§2.21).
 
 <a id="29-sas-beginauth"></a>
 
@@ -1405,7 +1275,7 @@ This method is transported by an HTTP POST to `$Config.urlBeginAuth`.
 
 <pre><code>POST https://login.microsoftonline.com/common/SAS/BeginAuth
 Content-Type: application/json; charset=utf-8
-canary: {$Config.canary}
+canary: {SAS canary}
 </code></pre>
 
 Request body:
@@ -1422,6 +1292,18 @@ __AuthMethodId__: A SAS method from `arrUserProofs[].authMethodId`.
 `FidoKey` and `AccessPass` do not use BeginAuth.
 
 __Method__: MUST be `BeginAuth`.
+
+__SAS canary__: The header named `canary` is sent with the MFA page's
+`canary` in one request form and with its `apiCanary` in another. Retain
+both values, and use the chosen form consistently for BeginAuth and EndAuth
+POST. This does not establish general interchangeability at other endpoints;
+ProcessAuth uses the page's `canary` form field. Neither token's name is the
+HTTP header name `apiCanary`.
+
+BeginAuth starts the selected challenge; it can deliver a push, SMS, or call.
+A failed or lost response does not prove that delivery did not occur. Avoid
+automatically starting another push challenge after an uncertain result,
+including fallback from Remote NGC to SAS notification.
 
 ##### 2.9.1.1.2 Response Body
 
@@ -1446,28 +1328,21 @@ __Method__: MUST be `BeginAuth`.
 
 ##### 2.9.1.1.3 Processing Details
 
-On `Success=true` the client MUST replace its working `flowToken` and `ctx`
-with `FlowToken` and `Ctx` from this response for EndAuth requests.
-After successful EndAuth, ProcessAuth uses the successful EndAuth response's
-values ([§2.3.4](#234-state-token-lineage)). Pending polls continue to use
-BeginAuth values.
+On `Success=true`, save `FlowToken`, `Ctx`, and `SessionId` as the SAS
+challenge state, retaining the MFA page's state separately. EndAuth uses
+one of the patterns in §2.3.4. Display `Entropy` for notification number
+matching when applicable; it need not be meaningful in later responses.
 
-`Entropy` is the number-match value for PhoneAppNotification (for example `98`).
-It is `0` in all later responses for the same session.
+SAS `SessionId` and `$Config.sessionId` can differ. `CorrelationId`,
+`Timestamp`, `Entropy`, `ReselectUIOption`, `ContinuationToken`, and
+`MobileAppAuthDetails` are response metadata when present; they are not
+additional completion fields in these exchanges. Do not require equality
+between correlation IDs, page IDs, or server trace IDs.
 
-`SessionId` in this JSON is a SAS session identifier (a GUID, for example
-`0186e637-…`) that stays constant across BeginAuth and every EndAuth
-response. It is different from `$Config.sessionId` (for example `92ed25a4-…`), which is the
-value EndAuth polling presents as `x-ms-sessionId`. `CorrelationId` equals the
-authorize `client-request-id`. `Timestamp` is a UTC time of the form
-`2026-11-04T17:48:12Z`.
-
-On failure `Success` is `false`, `ResultValue` and `Message` describe the
-condition, and `ErrCode` carries a numeric AADSTS code ([§2.21](#221-error-signaling)).
-`Success: false` on BeginAuth is terminal for that method.
-
-The request needs only `Content-Type` and `canary` headers (plus the usual
-`Accept`, `Host` and `User-Agent`). The response sets `fpc` and `x-ms-gateway-slice` cookies.
+On failure, inspect `ResultValue`, `Message`, and `ErrCode` when present.
+Do not proceed to EndAuth as though a challenge had started. A failed method
+attempt does not prove all other offered methods are unusable; switching or
+restarting is an explicit client/user decision using valid page state.
 
 <a id="210-sas-endauth"></a>
 
@@ -1492,9 +1367,9 @@ Request headers:
 <table class="protocol-table"><thead>
   <tr><th><p>Header</p></th><th><p>Value</p></th></tr>
 </thead><tbody>
- <tr><td><p>x-ms-sessionId</p></td><td><p><code>$Config.sessionId</code> from ConvergedTFA</p></td></tr>
- <tr><td><p>x-ms-flowToken</p></td><td><p>Current flow token (from BeginAuth)</p></td></tr>
- <tr><td><p>x-ms-ctx</p></td><td><p>Current ctx (from BeginAuth)</p></td></tr>
+ <tr><td><p>x-ms-sessionId</p></td><td><p>Page <code>sessionId</code> in the retained-state pattern, or SAS response <code>SessionId</code> in the response-state pattern (§2.3.4)</p></td></tr>
+ <tr><td><p>x-ms-flowToken</p></td><td><p>BeginAuth token retained across polls, or preceding SAS response token (§2.3.4)</p></td></tr>
+ <tr><td><p>x-ms-ctx</p></td><td><p>BeginAuth context retained across polls, or preceding SAS response context (§2.3.4)</p></td></tr>
  <tr><td><p>Cookie</p></td><td><p>ESTS cookies</p></td></tr>
 </tbody></table>
 
@@ -1560,34 +1435,30 @@ Approved:
 }
 </code></pre>
 
-`MobileAppAuthDetails` is present (non-null) only on the approving response.
-It contains `PolicyResults` entries; the entry with `Feature: 2`
-reported `NumberMatchCorrectNumberEntered`, which is how the number-match
-outcome is surfaced. `AuthAppState` is an opaque base64 string. These members
-are informational: none is posted in any later request.
+`MobileAppAuthDetails`, including opaque app state and policy evaluation
+entries, may accompany approval. These details are informational and are
+not posted to ProcessAuth. The example's feature numbers and policy strings
+are not required response members or a second success predicate.
 
 ##### 2.10.1.1.3 Processing Details
 
-If `Success` is false and `Retry` is true, the client MUST wait approximately
-`iPollingInterval` milliseconds and poll again with an incremented
-`pollCount`, without exceeding `iMaxPollAttempts`. Stop polling on success,
-terminal failure, or exhaustion of the attempt limit.
+If `Success=false` and `Retry=true`, wait `iPollingInterval` milliseconds
+before the next poll, incrementing the 1-based `pollCount` and respecting
+`iMaxPollAttempts` when advertised. The first poll may follow BeginAuth
+without waiting a full interval. Use the chosen state pattern from §2.3.4.
 
-If `Success` is true, the client MUST update `flowToken` / `ctx` from the
-response and continue to ProcessAuth.
+On `Success=true`, retain the returned `FlowToken` and `Ctx` and continue to
+ProcessAuth. On `Success=false` and `Retry=false`, stop this polling
+challenge; diagnostic fields may explain denial, timeout, or another failure.
+A missing `Retry` on an unsuccessful poll is not permission for unbounded
+polling. Treat an unrecognized response as a failure requiring explicit
+handling. These polling rules do not define code-entry retry behavior.
 
-If `Success` is false and `Retry` is false, the challenge has failed and
-`ErrCode` carries the AADSTS code, for example `500121` (the user did not
-complete the MFA prompt) ([§2.21](#221-error-signaling)).
-
-Example timeline: BeginAuth completes at `t0`; the first poll is sent at
-`t0 + 0.4 s` and returns pending; later polls follow at about 5.2 s
-intervals (5.1–5.3 s); the approving poll returns `Success: true`; ProcessAuth
-is posted under one second later. Successive polls MAY be served by
-different ESTS nodes in different datacenters (`x-ms-ests-server`: for
-example WUS3, EUS, SCUS), so flow state is carried entirely by the tokens and
-cookies, not by node affinity. Each poll carries `x-ms-flowToken` (about 1.8
-kB) and `x-ms-ctx` (about 0.9 kB) as headers and an empty body.
+Stop at the attempt limit, a local deadline, cancellation, or terminal failure.
+Use a finite local bound when an advertised limit is absent. Transport errors
+are distinct from a pending challenge and do not restart it automatically.
+SAS endpoints can also return HTML containing an Auth Config error; classify
+the response before assuming JSON (§2.21).
 
 <a id="2102-endauth-otp-submission"></a>
 
@@ -1609,13 +1480,29 @@ similar), EndAuth is invoked as HTTP POST with JSON body:
 </code></pre>
 
 Headers include `Content-Type: application/json; charset=utf-8` and
-`canary: {$Config.canary}`.
+`canary: {SAS canary}` as defined in §2.9.
 
-`SessionId` is the SAS identifier returned by BeginAuth, not
-`$Config.sessionId`. `FlowToken` and `Ctx` also come from BeginAuth.
-The response schema matches [§2.10.1.1.2](#210112-response-body). On
-`Success=true`, the client uses the returned `FlowToken` and `Ctx` for
-ProcessAuth.
+`SessionId` is the SAS challenge identifier returned by BeginAuth. `FlowToken`
+and `Ctx` initially come from the same response. Keep the original challenge
+state separately from failed-submission metadata. The shared SAS response
+members are illustrated in §2.10.1.1.2, but code submission has its own
+processing rules:
+
+1. Keep the OTP as a string, including leading zeroes. Trim surrounding user
+   entry whitespace; do not convert it to an integer.
+2. On `Success=true`, use the returned `FlowToken` and `Ctx` for ProcessAuth.
+3. An incorrect or expired code can be rejected while the challenge remains
+   usable. Such a response may omit `Retry` or carry `Retry=false`; the polling
+   rule does not make every code rejection terminal. A recoverable rejection
+   permits collecting a replacement code and submitting it with the retained
+   challenge state, without starting another BeginAuth.
+4. Do not classify every `Message` as a recoverable code rejection. An expired
+   flow token, denied challenge, or unrecognized error requires stopping or
+   explicit recovery. Failed requests never advance to ProcessAuth. HTML
+   service errors and transport failures also need separate handling.
+5. Do not repeatedly submit the same rejected code automatically. Bound
+   user-driven retries by cancellation and a finite local deadline; no
+   universal server retry allowance is established here.
 
 <a id="211-sas-processauth"></a>
 
@@ -1650,109 +1537,30 @@ Form fields:
 
 ##### 2.11.1.1.2 Response Body
 
-Outcomes:
+On success, the response can deliver an authorization response (§2.22),
+return an auto-submit interstitial (§2.18), or present an Auth Config
+interrupt (§1.3.11), including ProofUp or KMSI. These outcomes use the same
+response dispatcher as other completion posts; successful EndAuth alone is
+not authorization completion.
 
-1. __Redirect with code__: `302` `Location` containing `code` (flow complete).
-2. __MFA registration interrupt__: `200` HTML with
-   `pgid=ConvergedProofUpRedirect`, `sErrorCode` of `50203`, and
-   `urlSkipMfaRegistration` when postponement is allowed.
-3. __Intermediate auto-submit HTML__: same handling as
-   [§2.8.1.1.2](#28112-response-body).
+When ProofUp advertises `urlSkipMfaRegistration`, the client may use the
+resume operation in §2.13. Retain the `request` value submitted to
+ProcessAuth because a following ProofUp page can omit `sCtx`.
 
-##### 2.11.1.1.3 Processing Details
-
-When `urlSkipMfaRegistration` is present, the client MAY POST that endpoint
-per [§2.13](#213-skip-mfa-registration-resume) to complete authorization
-without registering an additional MFA method.
-
-The observed ProcessAuth form contains `request`, `mfaAuthMethod`,
-`login`, `flowToken`, `canary` in that order; the `canary` is the ConvergedTFA
-value (`n:1`). The `200` response sets `ESTSAUTH`, `ESTSAUTHPERSISTENT`,
-`ESTSAUTHLIGHT`, `buid`, `esctx`, a new `esctx-{id}`, `fpc` and
-`x-ms-gateway-slice`, and clears the previous `esctx-{id}` cookie. It
-carries no `x-ms-clientdata`. The ConvergedProofUpRedirect Auth Config that
-follows contains a new `sFT`, a new `canary`, no `sCtx`, and
-`sessionId` equal to the response's own request id.
+ProcessAuth may rotate authentication and context cookies. Their presence,
+quantity, or issue order is not a success signal (§2.20).
 
 <a id="212-authorization-code-token-exchange"></a>
 
-## 2.12 Authorization Code Token Exchange
+## 2.12 Authorization Code Handoff (Upstream)
 
-### 2.12.1 token
-
-#### 2.12.1.1 POST
-
-This method is transported by an HTTP POST.
-
-##### 2.12.1.1.1 Request
-
-<pre><code>POST https://login.microsoftonline.com/{tenant}/oauth2/token
-Content-Type: application/x-www-form-urlencoded
-</code></pre>
-
-Form fields:
-
-<table class="protocol-table"><thead>
-  <tr><th><p>Field</p></th><th><p>Value</p></th></tr>
-</thead><tbody>
- <tr><td><p>client_id</p></td><td><p>Application client ID</p></td></tr>
- <tr><td><p>grant_type</p></td><td><p>authorization_code</p></td></tr>
- <tr><td><p>code</p></td><td><p>Authorization code from the final redirect</p></td></tr>
- <tr><td><p>redirect_uri</p></td><td><p>Exact redirect_uri from the authorize request</p></td></tr>
-</tbody></table>
-
-##### 2.12.1.1.2 Response Body
-
-<pre><code class="lang-json">{
-  "token_type": "Bearer",
-  "scope": "mdm_delegation",
-  "expires_in": "5115",
-  "ext_expires_in": "5115",
-  "expires_on": "1793819646",
-  "not_before": "1793814230",
-  "resource": "https://enrollment.manage.microsoft.com/",
-  "access_token": "string",
-  "refresh_token": "string",
-  "id_token": "string"
-}
-</code></pre>
-
-##### 2.12.1.1.3 Processing Details
-
-`redirect_uri` MUST byte-for-byte match the authorize request. The resulting
-tokens reflect the resource/scopes of that authorize request. MFA satisfaction
-is represented in token claims; this exchange itself is the standard OAuth 2.0
-authorization-code grant. The four-field request shown here applies to a
-public client that did not use PKCE and supplied `resource` at authorize.
-When PKCE is used, the token request MUST include the matching
-`code_verifier`. Confidential clients also require client authentication.
-
-The response is `200` with `Content-Type: application/json;
-charset=utf-8`, `Cache-Control: no-store, no-cache`, and
-`x-ms-clientdata: e|||microsoftonline.com|none`. The following claims and timings describe an example v1 access token issued
-after password plus PhoneAppNotification MFA; they are not guaranteed for
-other resources or policies. Clients MUST treat access tokens for other APIs
-as opaque; use a validated ID token to identify the signed-in user, as
-explained in [Microsoft's token guidance](https://devblogs.microsoft.com/identity/access-tokens-and-id-tokens/).
-
-Example token details:
-
-<table class="protocol-table"><thead>
-  <tr><th><p>Item</p></th><th><p>Value</p></th></tr>
-</thead><tbody>
- <tr><td><p><code>expires_in</code></p></td><td><p><code>"5115"</code> (string). Equal to <code>exp</code> minus the server time of the response; the access token lifetime from <code>nbf</code> to <code>exp</code> is, for example, 5416 s.</p></td></tr>
- <tr><td><p><code>iat</code> / <code>nbf</code></p></td><td><p>Both 300 s earlier than the response time (clock-skew allowance).</p></td></tr>
- <tr><td><p>Access token header</p></td><td><p><code>typ: JWT</code>, <code>alg: RS256</code>, <code>x5t</code> and <code>kid</code> (equal).</p></td></tr>
- <tr><td><p>Access token claims</p></td><td><p><code>aud</code> (resource URI), <code>iss</code> (<code>https://sts.windows.net/{tid}/</code>), <code>iat</code>, <code>nbf</code>, <code>exp</code>, <code>acr: "1"</code>, <code>amr: ["pwd","mfa"]</code>, <code>appid</code> (client id), <code>appidacr: "0"</code>, <code>idtyp: "user"</code>, <code>ipaddr</code>, <code>name</code>, <code>oid</code>, <code>puid</code>, <code>rh</code>, <code>scp: "mdm_delegation"</code>, <code>sid</code>, <code>sub</code>, <code>tid</code>, <code>unique_name</code>, <code>upn</code>, <code>uti</code>, <code>ver: "1.0"</code>, <code>wids</code>, <code>xms_act_fct</code>, <code>xms_aud_guid</code>, <code>xms_ftd</code>, <code>xms_idrel</code>, <code>xms_sub_fct</code>, <code>aio</code>.</p></td></tr>
- <tr><td><p>ID token claims</p></td><td><p><code>aud</code> (client id), <code>iss</code>, <code>iat</code>, <code>nbf</code>, <code>exp</code> (3900 s after <code>iat</code>), <code>amr: ["pwd","mfa"]</code>, <code>idtyp</code>, <code>ipaddr</code>, <code>name</code>, <code>oid</code>, <code>puid</code>, <code>rh</code>, <code>sub</code>, <code>tenant_region_scope</code>, <code>tid</code>, <code>unique_name</code>, <code>upn</code>, <code>uti</code>, <code>ver: "1.0"</code>, <code>xms_idrel</code>, <code>aio</code>. The <code>sub</code> of the ID token differs from the <code>sub</code> of the access token (pairwise).</p></td></tr>
- <tr><td><p>Authentication methods claim</p></td><td><p><code>amr</code> carries <code>pwd</code> and <code>mfa</code> after a password plus PhoneAppNotification sign-in.</p></td></tr>
- <tr><td><p>Refresh token</p></td><td><p>Opaque string beginning <code>1.</code> (about 1.5 kB).</p></td></tr>
- <tr><td><p>Redirect <code>session_state</code></p></td><td><p>Equal to the <code>sid</code> claim of the access token.</p></td></tr>
-</tbody></table>
-
-Errors at this endpoint use the standard OAuth 2.0 JSON shape
-(`error`, `error_description`, `error_codes`, `timestamp`, `trace_id`,
-`correlation_id`); `error_description` begins `AADSTS{code}:`.
+ESTS interaction finishes when the authorization response is delivered (§2.22).
+Redeem and validate it using [RFC 6749 §4.1](https://www.rfc-editor.org/rfc/rfc6749#section-4.1)
+and the applicable Microsoft endpoint contract (§2.2.2). PKCE is specified by
+[RFC 7636](https://www.rfc-editor.org/rfc/rfc7636), and token validation by
+[OpenID Connect Core](https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation).
+Token exchange, refresh, claim inventories, and token lifetimes are outside
+this ESTS MFA specification.
 
 <a id="213-skip-mfa-registration-resume"></a>
 
@@ -1785,16 +1593,20 @@ Form fields:
 
 ##### 2.13.1.1.2 Response Body
 
-On success: `302` with `Location` containing `code` and `session_state`,
-suitable for [§2.12](#212-authorization-code-token-exchange). The response sets the same authenticated cookie set as the code-issuing
-Remote NGC `login` response ([§2.7.1.1.2](#27112-response-body)), including `CCState` and `SignInStateCookie`, and returns
-`x-ms-clientdata: e|||microsoftonline.com|none`.
+A successful skip can return `302` with `code` and `session_state`.
+Handle other authorization wrappers, interrupts, or continuation pages
+through §2.22. Persist returned cookie updates.
 
-The ProofUp page that offers this URL does not carry `sCtx`; the `ctx` field
-reuses the value posted to ProcessAuth. The ProofUp Auth Config's own `urlPost`
-points to a separate registration host and is not part of this protocol.
-Skipping succeeds with `sErrorCode: 50203` and no
-`iRemainingDaysToSkipMfaRegistration` member on the ProofUp page.
+In the skip-resume pattern above, ProofUp lacks `sCtx`, so `ctx` reuses
+ProcessAuth's submitted `request`. The page's `urlPost` can point to a
+separate registration host; it is not the skip endpoint. Use the advertised
+`urlSkipMfaRegistration`, preserving its query, rather than deriving it from
+`urlPost`.
+
+A skip URL can be offered with `sErrorCode=50203` and without
+`iRemainingDaysToSkipMfaRegistration`. Absence of remaining-days metadata
+does not invalidate an offered skip. This differs from postponement (§2.16);
+without an offered continuation, registration requires external interaction.
 
 <a id="214-fido-authentication"></a>
 
@@ -1803,7 +1615,7 @@ Skipping succeeds with `sErrorCode: 50203` and no
 FIDO may be offered passwordlessly (via GetCredentialType `FidoParams`) or
 after password login (via ConvergedTFA `arrUserProofs` entry `FidoKey` /
 `arrFidoAllowList`). Both use the same ESTS HTTP surface: a challenge
-bootstrap POST to `urlFidoLogin`, then an assertion POST to `urlPost`.
+bootstrap POST to `urlFidoLogin`, then an assertion POST to the initiating page's `urlPost`.
 
 <a id="2141-fidologin-challenge-bootstrap"></a>
 
@@ -1834,8 +1646,8 @@ Form fields:
  <tr><td><p>cancelUrl</p></td><td><p>Current <code>urlResume</code></p></td></tr>
  <tr><td><p>resumeUrl</p></td><td><p>Current <code>urlResume</code></p></td></tr>
  <tr><td><p>correlationId</p></td><td><p>Client request / correlation GUID</p></td></tr>
- <tr><td><p>credentialsJson</p></td><td><p>First entry of the FIDO allow-list
- (<code>FidoParams.AllowList[0]</code> or <code>arrFidoAllowList[0]</code>)</p></td></tr>
+ <tr><td><p>credentialsJson</p></td><td><p>A serialized entry of the FIDO allow-list
+ (<code>FidoParams.AllowList[0]</code> or <code>arrFidoAllowList[0]</code> in this request pattern). Pass the string unchanged, without serializing the string as JSON again</p></td></tr>
  <tr><td><p>ctx</p></td><td><p>Current <code>sCtx</code></p></td></tr>
  <tr><td><p>username</p></td><td><p>User principal name</p></td></tr>
  <tr><td><p>loginCanary</p></td><td><p><code>$Config.canary</code></p></td></tr>
@@ -1843,11 +1655,18 @@ Form fields:
 
 ##### 2.14.1.1.2 Response Body
 
-`200` HTML containing a new Auth Config. Required fields for completion:
+`200` HTML containing a new Auth Config. Take the following completion
+values from this response:
 
 - `sFidoChallenge` — challenge material for the local authenticator
 - `sCrossDomainCanary` — posted later as `lmcCanary`
-- `sessionId`, `sFT`, `sCtx`, `canary`, `urlPost`
+- `sessionId` — posted later as `hpgrequestid`
+
+Retain the initiating ConvergedSignIn or ConvergedTFA page's `urlPost`,
+`sFT`, `sCtx`, and `canary`. The assertion request uses those retained
+values, not a blanket replacement by the bootstrap page's state. This applies
+to both passwordless FIDO and FidoKey selected after primary authentication.
+The allow-list used for bootstrap belongs to the initiating flow.
 
 <a id="214113-processing-details"></a>
 
@@ -1864,8 +1683,10 @@ initial ConvergedSignIn page begins `O.` followed by a JWT whose
 `aud` is `urn:microsoft:fido:challenge`.
 
 `FidoParams.HasCrossDeviceCapablePasskey` (or
-`$Config.fIsPasskeySupportEnabled`) indicates a cross-device passkey. Platform
-passkey UX is outside this HTTP protocol; the ESTS posts below are unchanged.
+`$Config.fIsPasskeySupportEnabled`) can advertise cross-device passkey
+capabilities or UI support. Neither establishes possession of a physical key
+or client support for the offered mechanism. Local authenticator selection
+is outside this HTTP protocol; the ESTS request pattern is unchanged.
 
 <a id="2142-fido-assertion-completion"></a>
 
@@ -1875,7 +1696,7 @@ passkey UX is outside this HTTP protocol; the ESTS posts below are unchanged.
 
 ##### 2.14.2.1.1 Request
 
-<pre><code>POST {urlPost}
+<pre><code>POST {initiating-page urlPost}
 Content-Type: application/x-www-form-urlencoded
 </code></pre>
 
@@ -1886,12 +1707,12 @@ Form fields:
 </thead><tbody>
  <tr><td><p>type</p></td><td><p><code>23</code></p></td></tr>
  <tr><td><p>ps</p></td><td><p><code>23</code></p></td></tr>
- <tr><td><p>assertion</p></td><td><p>FIDO/WebAuthn assertion payload</p></td></tr>
+ <tr><td><p>assertion</p></td><td><p>Serialized FIDO/WebAuthn assertion payload, carried as one form value; do not concatenate unescaped JSON into the form body</p></td></tr>
  <tr><td><p>lmcCanary</p></td><td><p><code>sCrossDomainCanary</code> from the FIDO Auth Config</p></td></tr>
- <tr><td><p>hpgrequestid</p></td><td><p><code>sessionId</code></p></td></tr>
- <tr><td><p>ctx</p></td><td><p>Current ctx</p></td></tr>
- <tr><td><p>canary</p></td><td><p>Current canary</p></td></tr>
- <tr><td><p>flowToken</p></td><td><p>Current flow token</p></td></tr>
+ <tr><td><p>hpgrequestid</p></td><td><p>Bootstrap response <code>sessionId</code></p></td></tr>
+ <tr><td><p>ctx</p></td><td><p>Initiating page <code>sCtx</code></p></td></tr>
+ <tr><td><p>canary</p></td><td><p>Initiating page <code>canary</code></p></td></tr>
+ <tr><td><p>flowToken</p></td><td><p>Initiating page <code>sFT</code></p></td></tr>
 </tbody></table>
 
 ##### 2.14.2.1.2 Response Body
@@ -1903,7 +1724,16 @@ Success yields either:
    `error` with an optional `error_description`) as query parameters. Clients MUST parse that `href`
    when `Location` is absent.
 
-Intermediate auto-submit HTML MAY appear ([§2.18](#218-intermediate-auto-submit-html)).
+The response can also contain an interrupt or `pgid=ConvergedTFA` requiring
+another offered proof. Dispatch the result using §2.22 and §1.3.11; FIDO
+completion does not guarantee satisfaction of every tenant policy.
+Intermediate auto-submit HTML may appear (§2.18).
+
+Local authenticator operations follow
+[Web Authentication](https://www.w3.org/TR/webauthn-3/). This specification
+does not redefine authenticator processing or establish an additional JSON
+assertion schema. Form-encode the complete assertion string and all opaque
+values so characters such as `+`, `=`, braces, and quotes are preserved.
 
 <a id="215-temporary-access-pass-completion"></a>
 
@@ -2069,21 +1899,23 @@ Content-Type: application/json
 }
 </code></pre>
 
-Success is indicated by HTTP success status; the client may then restart
-interactive authentication with the new password.
+An alternative final-confirmation request uses
+`Content-Type: application/x-www-form-urlencoded` with lowercase `ctx` and
+`flowToken`, plus `currentpasswd`, `confirmnewpasswd`, and the page's
+`canary`. In both variants, take the context and flow token from the completed
+job response. Keep casing and encoding matched to the selected request form.
 
-Prior to SSPR begin, the password-change Auth Config itself is typically
-reached by posting username/password (and canary/ctx/flowToken) to the
-sign-in `urlPost`, identical to [§2.8](#28-login-password-submission).
+An HTTP success status can acknowledge the JSON confirmation. When a response
+contains a page or authorization response, dispatch it normally rather than
+assuming every HTTP 200 completes authentication. Restarting sign-in with the
+new password is a client recovery approach when continuation is unavailable;
+omitting `amr_values` on a restarted request is not an ESTS requirement.
 
-Further details: the authorize request that
-begins a password-change sign-in omits `amr_values=ngcmfa`; the JSON posts
-carry no `canary` header (the canary appears only in the final body); the
-URLs `urlAsyncSsprBegin`, `urlAsyncSsprPoll` and `urlPost` MAY be
-root-relative (beginning `/`), in which case they resolve against the scheme
-and authority of the response URL ([§2.22](#222-authorization-response-delivery-forms)); polling occurs
-about once per second; and success is signaled by an HTTP success status
-on the final POST.
+Resolve relative job and confirmation URLs against the page that advertised
+them (§2.22). Polling at about one-second intervals is an example cadence;
+apply a finite deadline and cancellation. Only confirm after the job completes
+without `ErrorMessage`. An error may require correcting the proposed password
+and beginning a new job, not confirming the failed job.
 
 <a id="218-intermediate-auto-submit-html"></a>
 
@@ -2104,8 +1936,10 @@ Processing rules:
    submit controls. Preserve repeated field names and their order.
 4. `POST` `application/x-www-form-urlencoded` to the action URL with those
    fields.
-5. Repeat until the response is a redirect with `code`, an Auth Config page
-   that is not an auto-submit interstitial, or an error.
+5. Dispatch each response using §2.22. Continue only while another genuine
+   continuation form is present; stop at an authorization response, interrupt,
+   error, cancellation, or a finite local hop/deadline limit. A repeated form
+   is not permission to submit indefinitely.
 
 Clients MUST NOT require a full browser layout engine; HTML form parsing is
 sufficient.
@@ -2125,93 +1959,23 @@ is posted without any ESTS-specific headers.
 
 <a id="219-oauth-20-device-authorization-grant"></a>
 
-## 2.19 OAuth 2.0 Device Authorization Grant
+## 2.19 Device Authorization Grant (Upstream)
 
-This grant is a separate interactive MFA channel. The user authenticates
-(including MFA) in a browser at a verification URI while the client polls a
-token endpoint. It does not use `$Config`, SAS, or GetCredentialType.
+The device authorization grant is a separate OAuth flow. It is specified by
+[RFC 8628](https://www.rfc-editor.org/rfc/rfc8628), with Microsoft endpoint
+behavior in [Microsoft's device-flow documentation](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-device-code).
+It is an optional alternative when application registration and tenant policy
+permit it; it does not bypass registration, consent, or authentication-strength
+requirements.
 
 <a id="2191-organizational-device-code"></a>
+<a id="2192-consumers-personal-account-device-code"></a>
+<a id="2192-consumers-device-code"></a>
 
-### 2.19.1 Organizational Device Code
-
-#### 2.19.1.1 Device Code Request
-
-<pre><code>POST https://login.microsoftonline.com/{tenant|common}/oauth2/v2.0/devicecode
-Content-Type: application/x-www-form-urlencoded
-
-client_id={client_id}&amp;scope={urlencoded-scopes}
-</code></pre>
-
-`scope` typically includes `openid profile offline_access` plus resource
-scopes. Including `{azure-portal-app-id}/.default` (application ID
-`c44b4083-3bb0-49c1-b47d-974e53cbdf3c`) is used when the client needs the
-resulting tokens to carry MFA context suitable for later exchange.
-
-The request carries `Accept: application/json`. The example sends `openid
-profile offline_access` before additional scopes; scope ordering is not a
-protocol requirement.
-
-Response JSON (RFC 8628 device authorization response) includes
-`device_code`, `user_code`, `verification_uri`, `expires_in`, optional
-`interval`, and `message`. `verification_uri_complete` is not
-returned. Failures use the token-endpoint error shape ([§2.21](#221-error-signaling)).
-
-#### 2.19.1.2 Device Code Token Poll
-
-<pre><code>POST https://login.microsoftonline.com/{tenant|common}/oauth2/v2.0/token
-Content-Type: application/x-www-form-urlencoded
-
-client_id={client_id}&amp;grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&amp;device_code={device_code}
-</code></pre>
-
-Pending authorization returns an HTTP error response (JSON,
-`error: "authorization_pending"`) whose `error_codes` include `70016`.
-Success returns a v2.0 token response (numeric `expires_in`; `refresh_token`
-because `offline_access` was requested). Any user can complete the
-verification page. Clients MUST validate the ID token and match a stable
-identifier (`tid` and `oid`, or issuer and `sub`) to the intended account.
-Mutable username claims are suitable for display and hints, not authorization.
-
-Poll no faster than the returned `interval` in seconds, or once every five
-seconds if it is absent. On `slow_down`, increase the interval by five
-seconds for this and all subsequent polls. Reduce polling frequency after a
-connection timeout. Stop on success, expiry, or any error other than
-`authorization_pending` or `slow_down`; Microsoft also uses
-`authorization_declined` and `bad_verification_code`. These rules follow
-[RFC 8628 §3.5](https://www.rfc-editor.org/rfc/rfc8628#section-3.5).
-
-The client MAY redeem the refresh token for a different resource when that
-resource and the required permissions are available to the same client and
-user. This does not bypass consent or Conditional Access:
-
-<pre><code>POST https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token
-Content-Type: application/x-www-form-urlencoded
-Accept: application/json
-
-client_id={client_id}&amp;scope=openid%20profile%20offline_access%20{resource}%2F.default&amp;grant_type=refresh_token&amp;refresh_token={refresh_token}&amp;client_info=1
-</code></pre>
-
-The same endpoint also accepts
-`grant_type=password` with `username`, `password` and `client_info=1`;
-that grant is non-interactive and therefore cannot satisfy an MFA
-requirement (the server returns an AADSTS error such as `50076`,
-[§2.21](#221-error-signaling)).
-
-### 2.19.2 Consumers (Personal Account) Device Code
-
-For `IfExistsResult == 5` personal Microsoft accounts:
-
-<pre><code>POST https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode
-POST https://login.microsoftonline.com/consumers/oauth2/v2.0/token
-</code></pre>
-
-Request/response shapes match [§2.19.1](#2191-organizational-device-code).
-The verification experience is hosted at a consumers URI (commonly under
-`www.microsoft.com/link`), and clients MUST use the returned `verification_uri`; its hostname is not
-a reliable account-type discriminator. Personal accounts
-cannot be issued a token for the device-enrollment resource
-(`enrollment.manage.microsoft.com`) through this route.
+Organizational and personal-account routing belongs to that upstream flow.
+The Remote NGC `GetOneTimeCode` / `DeviceCodeStatus` exchanges (§2.5–§2.7)
+are ESTS authentication operations and MUST NOT be treated as RFC 8628
+requests or polled using its token-endpoint rules.
 
 <a id="220-session-cookies-and-response-headers"></a>
 
@@ -2219,121 +1983,85 @@ cannot be issued a token for the device-enrollment resource
 
 ### 2.20.1 Cookies
 
-The observed cookies below are issued for `login.microsoftonline.com` with
-`Secure` and `SameSite=None`. A client MUST keep a cookie jar, send only
-cookies applicable to each request's domain, path, and scheme, and honor
-expiry and deletion. An expired `Set-Cookie` or `Max-Age=0` removes the cookie
-with the matching name, domain, and path; an empty value alone does not.
-Cookies scoped to `login.microsoftonline.com` MUST NOT be forwarded to the
-FIDO bootstrap host `login.microsoft.com`.
+Maintain applicable cookies across the interaction, honoring response
+attributes according to [RFC 6265](https://www.rfc-editor.org/rfc/rfc6265).
+ESTS cookie names encountered in these exchanges include:
 
 <table class="protocol-table"><thead>
-  <tr><th><p>Cookie</p></th><th><p>Attributes</p></th><th><p>Set by</p></th><th><p>Notes</p></th></tr>
+<tr><th><p>Cookies</p></th><th><p>ESTS role</p></th></tr>
 </thead><tbody>
- <tr><td><p><code>buid</code></p></td><td><p>host-only, <code>HttpOnly</code>, expires +30 days</p></td><td><p>authorize; every authenticating step</p></td><td><p>Value changes per issue.</p></td></tr>
- <tr><td><p><code>esctx</code></p></td><td><p>domain <code>.login.microsoftonline.com</code>, <code>HttpOnly</code></p></td><td><p>authorize; each authenticating step</p></td><td><p>Page/request context cookie.</p></td></tr>
- <tr><td><p><code>esctx-{id}</code></p></td><td><p>domain <code>.login.microsoftonline.com</code>, <code>HttpOnly</code>; <code>{id}</code> is an 11-character suffix</p></td><td><p>authorize; each authenticating step</p></td><td><p>The suffix is new on each issue. Each authenticating response also deletes the previous <code>esctx-{id}</code>. For example: <code>esctx-tudMxTqay0</code> (authorize), deleted at password login which issued <code>esctx-V4Ifm9r8WpE</code>, deleted at ProcessAuth which issued <code>esctx-9ldDmB4UAWk</code>, deleted at resume with no replacement.</p></td></tr>
- <tr><td><p><code>fpc</code></p></td><td><p>host-only, <code>HttpOnly</code>, expires +30 days from each issue</p></td><td><p>every ESTS response</p></td><td><p>The value is extended on each authenticating step by appending segments (the value seen at authorize is a prefix of every later value).</p></td></tr>
- <tr><td><p><code>x-ms-gateway-slice</code>, <code>stsservicecookie</code></p></td><td><p><code>httponly</code>; value <code>estsfd</code></p></td><td><p>authorize (<code>stsservicecookie</code> only here); GetCredentialType and every later response</p></td><td><p>Routing hint.</p></td></tr>
- <tr><td><p><code>ESTSAUTHPERSISTENT</code></p></td><td><p>domain <code>.login.microsoftonline.com</code>, <code>HttpOnly</code>, expires +90 days</p></td><td><p>the first authenticating response: Remote NGC <code>login</code>; password <code>login</code>; re-issued by ProcessAuth and resume</p></td><td><p>Present on a ConvergedTFA response, i.e. before MFA is satisfied.</p></td></tr>
- <tr><td><p><code>ESTSAUTH</code></p></td><td><p>domain <code>.login.microsoftonline.com</code>, <code>HttpOnly</code>, session cookie</p></td><td><p>same responses as <code>ESTSAUTHPERSISTENT</code></p></td><td><p></p></td></tr>
- <tr><td><p><code>ESTSAUTHLIGHT</code></p></td><td><p>host-only, not <code>HttpOnly</code>, session cookie; value <code>+{guid}</code></p></td><td><p>same responses</p></td><td><p>The GUID can equal the redirect <code>session_state</code> (Remote NGC login); after password plus SAS MFA only its first segment matched <code>session_state</code> / <code>sid</code>.</p></td></tr>
- <tr><td><p><code>CCState</code></p></td><td><p>domain <code>.login.microsoftonline.com</code>, <code>HttpOnly</code>, expires +10 days</p></td><td><p>responses that issue the authorization code (login, resume)</p></td><td><p></p></td></tr>
- <tr><td><p><code>SignInStateCookie</code></p></td><td><p>domain <code>.login.microsoftonline.com</code>, <code>HttpOnly</code>, session cookie</p></td><td><p>responses that issue the authorization code</p></td><td><p></p></td></tr>
+<tr><td><p><code>buid</code>, <code>esctx</code>, <code>esctx-{id}</code></p></td><td><p>Browser/page context. Context-cookie names and values can change between pages; apply updates and deletions.</p></td></tr>
+<tr><td><p><code>fpc</code></p></td><td><p>Session/browser tracking; may be updated across requests.</p></td></tr>
+<tr><td><p><code>x-ms-gateway-slice</code>, <code>stsservicecookie</code></p></td><td><p>Routing hints; not substitutes for opaque flow state.</p></td></tr>
+<tr><td><p><code>ESTSAUTH</code>, <code>ESTSAUTHPERSISTENT</code>, <code>ESTSAUTHLIGHT</code></p></td><td><p>Authentication-related state; can be issued before MFA is satisfied and rotated by completion posts.</p></td></tr>
+<tr><td><p><code>CCState</code>, <code>SignInStateCookie</code></p></td><td><p>Additional sign-in state that can accompany authorization completion.</p></td></tr>
 </tbody></table>
-
-The token endpoint response sets only `fpc` and `x-ms-gateway-slice`. Which
-individual cookies ESTS requires on each request is not specified; a client
-SHOULD send all applicable, unexpired cookies after authorize.
+The inventory is descriptive: neither all names nor a fixed issue order is
+required for every flow. Cookie names, GUID relationships, and expiry durations
+do not establish authentication success. ESTS cookies scoped to
+`login.microsoftonline.com` are not sent to `login.microsoft.com` or an external IdP.
 
 ### 2.20.2 Request Headers
 
 <table class="protocol-table"><thead>
-  <tr><th><p>Header</p></th><th><p>Where</p></th><th><p>Value</p></th></tr>
+<tr><th><p>Header</p></th><th><p>ESTS use</p></th></tr>
 </thead><tbody>
- <tr><td><p><code>Host</code></p></td><td><p>all</p></td><td><p>The request URL's authority: typically <code>login.microsoftonline.com</code>, <code>login.microsoft.com</code> for FIDO bootstrap, or <code>odc.officeapps.live.com</code> for federation discovery.</p></td></tr>
- <tr><td><p><code>Accept</code></p></td><td><p>most requests</p></td><td><p><code>*/*</code>; device authorization and the refresh-token example use <code>application/json</code>.</p></td></tr>
- <tr><td><p><code>Content-Type</code></p></td><td><p>POST</p></td><td><p><code>application/json; charset=UTF-8</code> (GetCredentialType, GetOneTimeCode); <code>application/json</code> (DeviceCodeStatus); <code>application/json; charset=utf-8</code> (BeginAuth, EndAuth POST); <code>application/json</code> (SSPR); <code>application/x-www-form-urlencoded</code> (login, ProcessAuth, resume, token, FIDO, SAS form posts)</p></td></tr>
- <tr><td><p><code>client-request-id</code></p></td><td><p>GetCredentialType, GetOneTimeCode</p></td><td><p>The authorize correlation GUID</p></td></tr>
- <tr><td><p><code>canary</code></p></td><td><p>GetOneTimeCode, DeviceCodeStatus, BeginAuth, EndAuth POST</p></td><td><p><code>$Config.canary</code> of the page being answered</p></td></tr>
- <tr><td><p><code>x-ms-sessionId</code>, <code>x-ms-flowToken</code>, <code>x-ms-ctx</code></p></td><td><p>EndAuth GET</p></td><td><p><a href="#210-sas-endauth">§2.10</a></p></td></tr>
- <tr><td><p><code>User-Agent</code></p></td><td><p>all</p></td><td><p>A browser string (for example Firefox 131) on authorize, GetCredentialType, DeviceCodeStatus, BeginAuth and password <code>login</code>; EndAuth, ProcessAuth, resume and token accept a non-browser product token. FIDO capability gating depends on this header (<a href="#214113-processing-details">§2.14.1.1.3</a>).</p></td></tr>
+<tr><td><p><code>Content-Type</code></p></td><td><p>JSON for discovery, Remote NGC status, SAS BeginAuth/EndAuth POST, and SSPR jobs; form encoding for credential and completion posts. SSPR confirmation has both variants (§2.17).</p></td></tr>
+<tr><td><p><code>client-request-id</code></p></td><td><p>Correlation GUID on GetCredentialType and GetOneTimeCode; not an authentication credential.</p></td></tr>
+<tr><td><p><code>canary</code></p></td><td><p>Entry-page <code>canary</code> on GetOneTimeCode/DeviceCodeStatus. SAS BeginAuth and EndAuth POST have the canary-header variants in §2.9.</p></td></tr>
+<tr><td><p><code>x-ms-sessionId</code>, <code>x-ms-flowToken</code>, <code>x-ms-ctx</code></p></td><td><p>EndAuth GET state from one consistent polling pattern (§2.3.4).</p></td></tr>
+<tr><td><p><code>User-Agent</code></p></td><td><p>A browser string can affect advertised credentials, especially FIDO. Use a consistent FIDO-capable browser string for authorize, discovery, and bootstrap; later SAS requests can accept a product token.</p></td></tr>
 </tbody></table>
-
 ### 2.20.3 Response Headers
 
-<table class="protocol-table"><thead>
-  <tr><th><p>Header</p></th><th><p>Where</p></th><th><p>Meaning</p></th></tr>
-</thead><tbody>
- <tr><td><p><code>client-request-id</code></p></td><td><p>GetCredentialType, GetOneTimeCode</p></td><td><p>Echo of the request header.</p></td></tr>
- <tr><td><p><code>x-ms-request-id</code></p></td><td><p>all ESTS responses</p></td><td><p>Server trace GUID. Equal to the <code>sessionId</code> of the Auth Config the response carries.</p></td></tr>
- <tr><td><p><code>x-ms-ests-server</code></p></td><td><p>all</p></td><td><p>Build, datacenter and slice, for example <code>2.1.25449.3 - WUS3 ProdSlices</code>. Consecutive polls MAY be answered from different datacenters (for example WUS3, EUS, SCUS, NCUS).</p></td></tr>
- <tr><td><p><code>x-ms-srs</code></p></td><td><p>all</p></td><td><p><code>1.P</code></p></td></tr>
- <tr><td><p><code>x-ms-clientdata</code></p></td><td><p>Remote NGC login redirect; resume and token</p></td><td><p><code>e|||microsoftonline.com|none</code></p></td></tr>
- <tr><td><p><code>Cache-Control</code></p></td><td><p>JSON, HTML</p></td><td><p><code>no-store, no-cache</code>; <code>Expires: -1</code>; <code>Pragma: no-cache</code> on HTML</p></td></tr>
- <tr><td><p><code>Content-Security-Policy-Report-Only</code></p></td><td><p>all</p></td><td><p>Contains a per-response script <code>nonce</code>; on HTML pages it equals the <code>nonce</code> attribute of the <code>$Config</code> script element.</p></td></tr>
- <tr><td><p><code>Location</code></p></td><td><p>302</p></td><td><p>Authorization-code redirect, <a href="#222-authorization-response-delivery-forms">§2.22</a>.</p></td></tr>
-</tbody></table>
+`Set-Cookie` updates the cookie jar; `Location` can carry an authorization
+response (§2.22). `client-request-id`, `x-ms-request-id`, `x-ms-ests-server`,
+and `x-ms-clientdata` provide correlation or service metadata when present.
+Do not derive a state field from diagnostic headers when it is explicitly
+supplied by the protocol. Polls can be served by different nodes; retain
+tokens and cookies rather than depending on node affinity. Cache and
+script-policy headers are not additional MFA request parameters.
 
-<p style="text-align:center"><a href="images/fig-22-cookies.png"><img src="images/fig-22-cookies.png" alt="Figure 22: Cookie issuance and rotation across a password plus MFA sign-in." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 22</b>: Cookie issuance and rotation across a password plus MFA sign-in.</p>
+<p style="text-align:center"><a href="images/fig-21-cookies.png"><img src="images/fig-21-cookies.png" alt="Figure 21: Cookie handling before and after MFA completion." style="max-width:100%"/></a></p>
+<p style="text-align:center"><b>Figure 21</b>: Cookie handling before and after MFA completion.</p>
 
 <a id="221-error-signaling"></a>
 
 ## 2.21 Error Signaling
 
-ESTS reports failures in four places. A client MUST check all four.
+Classify responses by the current endpoint and content; HTTP 200 alone does
+not indicate successful authentication. ESTS-specific error channels include:
 
 <table class="protocol-table"><thead>
-  <tr><th><p>Channel</p></th><th><p>Shape</p></th></tr>
+<tr><th><p>Channel</p></th><th><p>Interpretation</p></th></tr>
 </thead><tbody>
- <tr><td><p>Auth Config on an HTML <code>200</code></p></td><td><p><code>sErrorCode</code> (string) or <code>iErrorCode</code> (number), <code>sErrTxt</code> and/or <code>strServiceExceptionMessage</code>, and <code>arrValErrs</code>. <code>pgid</code> stays on the page that reports the error. <code>sErrorCode: "50058"</code> on the first ConvergedSignIn page is NOT an error.</p></td></tr>
- <tr><td><p>SAS JSON</p></td><td><p><code>Success: false</code>, <code>Retry: false</code>, <code>ResultValue</code>, <code>Message</code>, <code>ErrCode</code> (numeric AADSTS code).</p></td></tr>
- <tr><td><p>Authorization redirect</p></td><td><p><code>Location</code> with <code>error</code> and <code>error_description</code>; <code>error_description</code> begins <code>AADSTS{code}:</code> and is followed by <code>Trace ID</code>, <code>Correlation ID</code> and <code>Timestamp</code> lines.</p></td></tr>
- <tr><td><p>Token / device endpoint JSON</p></td><td><p><code>error</code>, <code>error_description</code>, <code>error_codes</code> [array], <code>timestamp</code>, <code>trace_id</code>, <code>correlation_id</code>.</p></td></tr>
+<tr><td><p>HTML Auth Config</p></td><td><p><code>sErrorCode</code> can be a numeric string or symbolic identifier such as <code>InvalidAccessPass</code>; <code>iErrorCode</code> is numeric. <code>sErrTxt</code>, <code>strServiceExceptionMessage</code>, and <code>arrValErrs</code> may provide diagnostics.</p></td></tr>
+<tr><td><p>SAS JSON</p></td><td><p>Check <code>Success</code>; use <code>Retry</code> for polling (§2.10.1), and the separate code-submission rules (§2.10.2). <code>ResultValue</code>, <code>Message</code>, and <code>ErrCode</code> may explain failure.</p></td></tr>
+<tr><td><p>Remote NGC JSON</p></td><td><p><code>AuthorizationState</code> determines pending, denial, or approval (§2.6); GetOneTimeCode may instead return an <code>error.message</code> object.</p></td></tr>
+<tr><td><p>Authorization response</p></td><td><p>Extract the response using §2.22 and apply upstream OAuth error handling. An <code>error</code> is a failure even if its description is absent.</p></td></tr>
 </tbody></table>
 
-AADSTS codes relevant to this protocol, with the catalog meaning:
+An initial ConvergedSignIn page can carry `50058` to indicate no existing
+session; it does not prevent starting sign-in. A ProofUp page can carry
+`50203` while offering a valid skip route. Interpret page identifiers and
+advertised actions before declaring such an interrupt terminal. Conversely,
+a recognizable `pgid` does not suppress a credential or service error.
 
-<table class="protocol-table"><thead>
-  <tr><th><p>Code</p></th><th><p>Name / meaning</p></th></tr>
-</thead><tbody>
- <tr><td><p>50058</p></td><td><p>UserInformationNotProvided; session information is insufficient, expected on the initial page.</p></td></tr>
- <tr><td><p>50203</p></td><td><p>The user has not registered the authenticator app and must register or snooze. With <code>urlSkipMfaRegistration</code> present this is the ProofUp interrupt in <a href="#213-skip-mfa-registration-resume">§2.13</a>.</p></td></tr>
- <tr><td><p>50072</p></td><td><p>UserStrongAuthEnrollmentRequiredInterrupt; user must enroll a second factor interactively.</p></td></tr>
- <tr><td><p>50079</p></td><td><p>UserStrongAuthEnrollmentRequired; MFA required and no method registered.</p></td></tr>
- <tr><td><p>50076</p></td><td><p>UserStrongAuthClientAuthNRequired; MFA required (for example by Conditional Access); retry with a new authorize request.</p></td></tr>
- <tr><td><p>50074</p></td><td><p>UserStrongAuthClientAuthNRequiredInterrupt; strong authentication required and the MFA challenge was not passed.</p></td></tr>
- <tr><td><p>500121</p></td><td><p>Strong authentication failed: the user did not complete the MFA prompt (denied, timed out, or setup issue).</p></td></tr>
- <tr><td><p>50087</p></td><td><p>SasRetryableError; transient failure in strong authentication; retry.</p></td></tr>
- <tr><td><p>50089</p></td><td><p>Flow token expired.</p></td></tr>
- <tr><td><p>50126</p></td><td><p>InvalidUserNameOrPassword.</p></td></tr>
- <tr><td><p>50053</p></td><td><p>IdsLocked; account locked or request blocked by IP reputation.</p></td></tr>
- <tr><td><p>50055</p></td><td><p>Password expired (password change interrupt).</p></td></tr>
- <tr><td><p>50140</p></td><td><p>KmsiInterrupt; the "keep me signed in" interrupt.</p></td></tr>
- <tr><td><p>16000</p></td><td><p>InteractionRequired.</p></td></tr>
- <tr><td><p>53003</p></td><td><p>Blocked by Conditional Access.</p></td></tr>
- <tr><td><p>65001</p></td><td><p>Consent required (<code>DelegationDoesNotExist</code>).</p></td></tr>
- <tr><td><p>54005</p></td><td><p>Authorization code already redeemed.</p></td></tr>
- <tr><td><p>70016</p></td><td><p>AuthorizationPending (device flow; keep polling).</p></td></tr>
- <tr><td><p>70011</p></td><td><p>InvalidScope.</p></td></tr>
- <tr><td><p>700016</p></td><td><p>Application not found in the tenant (client id does not match).</p></td></tr>
-</tbody></table>
+A code rejection can leave a challenge usable; a denied polling challenge or
+expired flow state cannot be treated as mere pending approval. The latter
+requires stopping or an explicit new interaction, not silently replaying a
+failed operation. SAS endpoints may return HTML service errors instead of
+JSON, so check for an Auth Config error before reporting a JSON parse failure.
 
-Codes `50203`, `16000`, and `50072` can indicate registration or interaction
-requirements. For `50203`, first handle any advertised skip or postponement
-option (§2.13, §2.16). If the browserless route cannot continue, the client MAY
-offer the device authorization grant when the client registration and tenant
-policy permit it. That grant does not bypass registration, consent, or
-Conditional Access requirements.
+For AADSTS meanings and standard OAuth error responses, use
+[Microsoft's error reference](https://learn.microsoft.com/en-us/entra/identity-platform/reference-error-codes).
+Numeric catalog entries and localized text are diagnostics, not a universal
+recovery decision table. Registration, consent, or Conditional Access can
+require interaction beyond these MFA APIs; an alternative grant does not
+bypass those requirements.
 
-Use the structured OAuth `error` value and the current flow state to choose
-recovery behavior. AADSTS numbers and human-readable messages are diagnostic
-information, not stable parsing contracts; see
-[Microsoft's error-handling guidance](https://learn.microsoft.com/en-us/entra/identity-platform/reference-error-codes#handling-error-codes-in-your-application).
-
-<p style="text-align:center"><a href="images/fig-23-errors.png"><img src="images/fig-23-errors.png" alt="Figure 23: Error signaling channels and AADSTS code handling." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 23</b>: Error signaling channels and AADSTS code handling.</p>
+<p style="text-align:center"><a href="images/fig-22-errors.png"><img src="images/fig-22-errors.png" alt="Figure 22: ESTS error channels and endpoint-specific recovery." style="max-width:100%"/></a></p>
+<p style="text-align:center"><b>Figure 22</b>: ESTS error channels and endpoint-specific recovery.</p>
 
 <a id="222-authorization-response-delivery-forms"></a>
 
@@ -2356,7 +2084,8 @@ Remote NGC `login`, ProcessAuth, `resume`, FIDO assertion, Access Pass,
 If none of the forms matches, check for an auto-submit interstitial
 ([§2.18](#218-intermediate-auto-submit-html)), then parse any `$Config`: an
 error, `ConvergedChangePassword`, `ConvergedConsent`, `KmsiInterrupt` (a `200`
-with no redirect) or `ConvergedProofUpRedirect` indicates an interrupt.
+with no redirect), `ConvergedProofUpRedirect`, or `ConvergedTFA` requires
+handling the new page state (§1.3.11).
 
 Auth Config URLs (`urlPost`, `urlAsyncSsprBegin`, ...) MAY be root-relative.
 Resolve relative URLs against the URL of the response that supplied them.
@@ -2364,31 +2093,21 @@ A root-relative path replaces the path while preserving the scheme and
 authority. In the SSPR examples, that authority matches the authorize URL;
 it can differ after a cross-host response. Values are typically absolute.
 
-<p style="text-align:center"><a href="images/fig-24-authz-response.png"><img src="images/fig-24-authz-response.png" alt="Figure 24: Authorization response delivery forms and token exchange." style="max-width:100%"/></a></p>
-<p style="text-align:center"><b>Figure 24</b>: Authorization response delivery forms and token exchange.</p>
+<p style="text-align:center"><a href="images/fig-23-authz-response.png"><img src="images/fig-23-authz-response.png" alt="Figure 23: ESTS authorization-response delivery wrappers and upstream handoff." style="max-width:100%"/></a></p>
+<p style="text-align:center"><b>Figure 23</b>: ESTS authorization-response delivery wrappers and upstream handoff.</p>
 
-## 2.23 Timing Summary
+## 2.23 Polling and Continuation Bounds
 
-All values are typical intervals, not server-mandated limits unless stated.
+SAS `iPollingInterval` is expressed in milliseconds and `iMaxPollAttempts`
+bounds polling attempts (§2.10.1). Values such as 5000 and 10 are examples,
+not constants for all tenants. Remote NGC polling uses its own response
+states and local bounds (§2.6); do not interpret an initial page's interval
+as SAS milliseconds without an established unit for that field.
 
-<table class="protocol-table"><thead>
-  <tr><th><p>Interval</p></th><th><p>Typical</p></th></tr>
-</thead><tbody>
- <tr><td><p>authorize → GetCredentialType</p></td><td><p>about 0.3 s</p></td></tr>
- <tr><td><p>GetCredentialType → GetOneTimeCode</p></td><td><p>user-driven (about 1.5 s)</p></td></tr>
- <tr><td><p>GetOneTimeCode → first DeviceCodeStatus</p></td><td><p>under 0.2 s</p></td></tr>
- <tr><td><p>DeviceCodeStatus poll spacing</p></td><td><p>about 5.1 s</p></td></tr>
- <tr><td><p>approving DeviceCodeStatus → login</p></td><td><p>under 0.2 s</p></td></tr>
- <tr><td><p>password login → BeginAuth</p></td><td><p>about 0.25 s</p></td></tr>
- <tr><td><p>BeginAuth → first EndAuth</p></td><td><p>about 0.4 s</p></td></tr>
- <tr><td><p>EndAuth poll spacing</p></td><td><p>5.1–5.3 s</p></td></tr>
- <tr><td><p>approving EndAuth → ProcessAuth</p></td><td><p>under 1 s</p></td></tr>
- <tr><td><p>ProcessAuth → resume → token</p></td><td><p>about 0.2 s each</p></td></tr>
- <tr><td><p>Auth Config advertised</p></td><td><p><code>iPollingInterval</code> 5000 (ConvergedTFA), <code>iMaxPollAttempts</code> 10, <code>iPollingTimeout</code> 300 (ConvergedSignIn)</p></td></tr>
- <tr><td><p>Access token lifetime</p></td><td><p><code>nbf</code> to <code>exp</code> about 5400 s; ID token about 3900 s</p></td></tr>
- <tr><td><p>Authorization code lifetime</p></td><td><p>about 1 minute</p></td></tr>
- <tr><td><p><code>fpc</code> / <code>buid</code> cookies</p></td><td><p>30 days; <code>ESTSAUTHPERSISTENT</code> 90 days; <code>CCState</code> 10 days</p></td></tr>
-</tbody></table>
+Use finite deadlines for polling, code entry, SSPR jobs, and continuation
+chains. Stopping locally is not evidence that a server challenge was revoked.
+Do not silently start a new challenge after cancellation or timeout. Cookie
+expiry is determined by the response attributes, not a fixed lifetime table.
 
 # 3 Protocol Examples (Non-Normative)
 
@@ -2396,26 +2115,10 @@ Examples below omit cookie headers and truncate opaque tokens.
 
 ## 3.1 Passwordless Remote NGC
 
-### 3.1.1 Federation Provider
+### 3.1.1 Authority Selection
 
-#### Request
-
-<pre><code>GET /odc/v2.1/federationProvider?domain=contoso.com HTTP/1.1
-Host: odc.officeapps.live.com
-Accept: */*
-</code></pre>
-
-#### Response
-
-<pre><code>HTTP/1.1 200 OK
-Content-Type: application/json; charset=utf-8
-
-{"environment":"Global","tenantId":"6973bb37-65f8-440e-b39e-dd57da64f6cf",
- "authority_host":"login.microsoftonline.com","graph":"https://graph.microsoft.com",
- "endpoint":[{"type":"OrgId",
-   "authentication_endpoint":"https://login.microsoftonline.com/common/oauth2/authorize",
-   "token_endpoint":"https://login.microsoftonline.com/common/oauth2/token"},"..."]}
-</code></pre>
+Select the intended tenant/cloud authority using the external guidance in
+§2.1, then enter the ESTS page interaction below.
 
 ### 3.1.2 Authorize (Auth Config scrape)
 
@@ -2498,10 +2201,32 @@ canary: ...
 #### Response
 
 <pre><code>{"Success":true,"ResultValue":"Success","AuthMethodId":"PhoneAppNotification",
- "FlowToken":"...","Ctx":"...","Entropy":98,"Retry":false,"ErrCode":0,...}
+ "FlowToken":"...","Ctx":"...","SessionId":"...","Entropy":98,"Retry":false,"ErrCode":0,...}
 </code></pre>
 
-### 3.2.3 EndAuth poll → ProcessAuth → token
+### 3.2.3 EndAuth poll → ProcessAuth → authorization response
+
+These two GET examples illustrate the alternative polling-state patterns
+(§2.3.4). They are alternatives for a challenge, not requests to send in
+parallel. Header placeholders denote the original opaque values.
+
+Retained-state pattern:
+
+<pre><code>GET {urlEndAuth}?authMethodId=PhoneAppNotification&amp;pollCount=1
+x-ms-sessionId: {MFA-page sessionId}
+x-ms-flowToken: {BeginAuth FlowToken}
+x-ms-ctx: {BeginAuth Ctx}
+</code></pre>
+
+Keep these header values on pending polls. In the response-state pattern,
+the first poll uses BeginAuth's SAS state and later polls use the preceding
+EndAuth response's state:
+
+<pre><code>GET {urlEndAuth}?authMethodId=PhoneAppNotification&amp;pollCount={n}
+x-ms-sessionId: {preceding SAS SessionId}
+x-ms-flowToken: {preceding SAS FlowToken}
+x-ms-ctx: {preceding SAS Ctx}
+</code></pre>
 
 Pending polls return `"Success":false,"Retry":true,"ResultValue":"AuthenticationPending"`.
 The approving poll returns `"Success":true`. ProcessAuth is then posted:
@@ -2511,13 +2236,8 @@ The approving poll returns `"Success":true`. ProcessAuth is then posted:
 
 If a ProofUp interrupt is returned, POST
 `/{tenant}/resume?skipmfaregistration=1` with `flowtoken`, `ctx`, and
-`canary`. The final `302` Location yields `code`, exchanged at:
-
-<pre><code>POST /{tenant}/oauth2/token
-Content-Type: application/x-www-form-urlencoded
-
-client_id=...&amp;grant_type=authorization_code&amp;code=...&amp;redirect_uri=ms-aadj-redir%3A%2F%2Fauth%2Fdrs
-</code></pre>
+`canary`. Use this skip only when advertised. The final authorization response
+hands control back to the upstream OAuth protocol (§2.12).
 
 ## 3.3 SAS PhoneAppOTP
 
@@ -2531,7 +2251,11 @@ canary: ...
  "SessionId":"...","FlowToken":"...","Ctx":"...","Method":"EndAuth"}
 </code></pre>
 
-Then ProcessAuth with `mfaAuthMethod=PhoneAppOTP`.
+Only after `Success=true`, post ProcessAuth with
+`mfaAuthMethod=PhoneAppOTP` and the successful response's context/token.
+On a recoverable code rejection, re-prompt within the same challenge as
+specified in §2.10.2; `Retry=false` or an absent `Retry` is not by itself a
+terminal code-entry result.
 
 ## 3.4 SAS ConsolidatedTelephony → ProcessAuth mapping
 
@@ -2540,7 +2264,8 @@ posts `mfaAuthMethod=OneWaySMS`.
 
 ## 3.5 FIDO Assertion Completion
 
-After `urlFidoLogin` returns `sFidoChallenge` / `sCrossDomainCanary`:
+After `urlFidoLogin`, use bootstrap `sCrossDomainCanary` / `sessionId`
+and retain initiating `urlPost` / `sCtx` / `canary` / `sFT` (§2.14):
 
 <pre><code>POST {urlPost} HTTP/1.1
 Content-Type: application/x-www-form-urlencoded
@@ -2558,59 +2283,44 @@ login=user%40contoso.com&amp;loginfmt=user%40contoso.com&amp;accesspass=...&amp;
 
 When `urlPost` is ProcessAuth, replace `ctx=` with `request=`.
 
-## 3.7 Device Authorization Grant
+## 3.7 External OAuth Flows
 
-<pre><code>POST /{tenant}/oauth2/v2.0/devicecode
-client_id=...&amp;scope=openid%20profile%20offline_access%20...
-
-POST /{tenant}/oauth2/v2.0/token
-client_id=...&amp;grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code&amp;device_code=...
-</code></pre>
+Device authorization and token exchange examples belong to the upstream
+references in §2.19 and §2.12.
 
 # 4 Security Considerations
 
-1. __Secrets on the wire__: Passwords, OTPs, flow tokens, and authorization
-   codes are bearer secrets. All requests MUST use TLS.
-2. __Canary and cookies__: Omitting `canary` or ESTS cookies causes ESTS to
-   reject or reset the flow. Clients MUST maintain a cookie jar for
-   `login.microsoftonline.com`.
-3. __Auth Config integrity__: `$Config` is served over TLS as part of ESTS
-   HTML. Clients parse it as protocol control data, not as executable page
-   script.
-4. __Redirect handling__: Authorization codes appear on `Location` URIs,
-   including custom schemes. Clients MUST capture `code` without navigating
-   a browser document.
-5. __Polling__: DeviceCodeStatus uses a Remote NGC session identifier,
-   canary, and applicable cookies; EndAuth uses the flow state and session
-   identifiers specified in §2.10. These values MUST be protected as secrets.
-6. __Pre-MFA cookies__: `ESTSAUTH*` cookies are issued by the password
-   `login` response and by ProcessAuth before an authorization code is issued.
-   Their presence does not establish completed authentication or MFA.
-   Redeem authorization codes and validate the resulting ID token before
-   establishing a local authenticated session; enforce required authentication
-   strength through the applicable policy and validated claims.
-7. __Device flow identity__: Any user can complete a device authorization
-   verification page. Validate the ID token's signature, issuer, audience,
-   and lifetime, then compare stable identity claims to the intended account.
-   Do not rely on an unvalidated access token or a mutable username.
-8. __Credential handling__: The password is posted in a form field
-   (`passwd`) and again as `OldPassword` / `currentpasswd` during SSPR.
-   Passwords, OTPs, tokens, canaries, authorization codes, and session cookies
-   MUST NOT be logged.
-9. __Opaque tokens in headers__: EndAuth carries flow state in request
-   headers, so clients and intermediaries MUST redact these values from logs.
-10. __Authorization response binding__: Clients SHOULD send an unpredictable
-    `state` value bound to the request and MUST verify the returned value
-    before accepting a code or error. PKCE with `S256` SHOULD be used where
-    supported. Validate the response target against the registered redirect
-    URI before consuming its parameters.
+Upstream OAuth security and response validation are specified by
+[RFC 9700](https://www.rfc-editor.org/rfc/rfc9700),
+[RFC 7636](https://www.rfc-editor.org/rfc/rfc7636), and
+[OpenID Connect Core](https://openid.net/specs/openid-connect-core-1_0.html).
+Those requirements also apply at the handoff boundaries of this document.
+The following considerations concern ESTS interaction itself:
+
+1. Protect passwords, OTPs, tokens, canaries, and session cookies. Use TLS
+   and redact secrets from bodies, URLs, headers, and logs, including
+   EndAuth's `x-ms-flowToken` and `x-ms-ctx` headers.
+2. Parse Auth Config as control data, without executing its scripts. Retain
+   state by provenance (§2.3.4), including the FIDO host transition.
+3. Maintain applicable cookies across the interaction, including federation
+   return. Cookie behavior follows [RFC 6265](https://www.rfc-editor.org/rfc/rfc6265);
+   do not forward ESTS cookies to an unrelated IdP or the FIDO host merely
+   because those hosts participate in the same flow.
+4. `ESTSAUTH*` cookies can be issued before MFA completion. Neither their
+   presence nor successful EndAuth establishes completed authorization.
+5. Distinguish actual continuation forms from ordinary sign-in, registration,
+   or consent forms. Use advertised destinations and respect protocol
+   boundaries; do not forward credentials into a guessed continuation.
+6. Bound retries and continuation chains. Challenge-start requests can
+   deliver notifications even when their response is lost; automatic restart
+   can cause duplicate prompts. Respect cancellation and terminal denial.
 
 # 5 Appendix: Endpoint Index
 
 <table class="protocol-table"><thead>
   <tr><th><p>Endpoint</p></th><th><p>Section</p></th></tr>
 </thead><tbody>
- <tr><td><p>GET odc.officeapps.live.com/odc/v2.1/federationProvider</p></td><td><p>2.1</p></td></tr>
+ <tr><td><p>POST {authority-origin}/login.srf (federated return)</p></td><td><p>1.3.12</p></td></tr>
  <tr><td><p>GET login.microsoftonline.com/{tenant}/oauth2/authorize</p></td><td><p>2.2</p></td></tr>
  <tr><td><p>Auth Config <code>$Config</code> embedded in HTML</p></td><td><p>2.3</p></td></tr>
  <tr><td><p>POST login.microsoftonline.com/common/GetCredentialType</p></td><td><p>2.4</p></td></tr>
@@ -2620,7 +2330,6 @@ client_id=...&amp;grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_c
  <tr><td><p>POST login.microsoftonline.com/common/SAS/BeginAuth</p></td><td><p>2.9</p></td></tr>
  <tr><td><p>GET/POST login.microsoftonline.com/common/SAS/EndAuth</p></td><td><p>2.10</p></td></tr>
  <tr><td><p>POST login.microsoftonline.com/common/SAS/ProcessAuth</p></td><td><p>2.11</p></td></tr>
- <tr><td><p>POST login.microsoftonline.com/{tenant}/oauth2/token</p></td><td><p>2.12</p></td></tr>
  <tr><td><p>POST login.microsoftonline.com/{tenant}/resume?skipmfaregistration=1</p></td><td><p>2.13</p></td></tr>
  <tr><td><p>POST login.microsoft.com/{tenant}/fido/get (urlFidoLogin)</p></td><td><p>2.14.1</p></td></tr>
  <tr><td><p>POST urlPost with FIDO assertion (type=23)</p></td><td><p>2.14.2</p></td></tr>
@@ -2628,12 +2337,6 @@ client_id=...&amp;grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_c
  <tr><td><p>POST urlPost with LoginOptions=1 (KMSI / ProofUp continue)</p></td><td><p>2.16</p></td></tr>
  <tr><td><p>POST urlAsyncSsprBegin / urlAsyncSsprPoll / urlPost (password change)</p></td><td><p>2.17</p></td></tr>
  <tr><td><p>POST intermediate HTML form actions</p></td><td><p>2.18</p></td></tr>
- <tr><td><p>GET {authority}/oauth2/v2.0/authorize (silent / non-interactive code request)</p></td><td><p>2.2.2</p></td></tr>
- <tr><td><p>POST {authority}/oauth2/v2.0/token (refresh_token / password grants)</p></td><td><p>2.19.1</p></td></tr>
- <tr><td><p>POST {authority}/oauth2/v2.0/devicecode</p></td><td><p>2.19.1</p></td></tr>
- <tr><td><p>POST {authority}/oauth2/v2.0/token (device_code grant)</p></td><td><p>2.19.1</p></td></tr>
- <tr><td><p>POST login.microsoftonline.com/consumers/oauth2/v2.0/devicecode</p></td><td><p>2.19.2</p></td></tr>
- <tr><td><p>POST login.microsoftonline.com/consumers/oauth2/v2.0/token</p></td><td><p>2.19.2</p></td></tr>
 </tbody></table>
 
 <a id="6-appendix-authentication-path-index"></a>
@@ -2649,7 +2352,7 @@ client_id=...&amp;grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_c
   <td><p>urlPost + accesspass</p></td></tr>
  <tr><td><p>Passwordless FIDO</p></td><td><p>GetCredentialType FidoParams</p></td>
   <td><p>urlFidoLogin → urlPost assertion</p></td></tr>
- <tr><td><p>Password only (no MFA)</p></td><td><p>HasPassword</p></td>
+ <tr><td><p>Password with no further challenge</p></td><td><p>HasPassword</p></td>
   <td><p>login → 302 code</p></td></tr>
  <tr><td><p>Password + PhoneAppNotification / CompanionApps</p></td><td><p>ConvergedTFA arrUserProofs</p></td>
   <td><p>BeginAuth → EndAuth GET poll → ProcessAuth</p></td></tr>
@@ -2674,11 +2377,7 @@ client_id=...&amp;grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_c
  <tr><td><p>Consent</p></td><td><p>pgid=ConvergedConsent</p></td>
   <td><p>Terminal (no MFA completion API)</p></td></tr>
  <tr><td><p>Federated IdP</p></td><td><p>FederationRedirectUrl</p></td>
-  <td><p>External; or device-code grant alternative</p></td></tr>
- <tr><td><p>Org device code</p></td><td><p>Direct grant</p></td>
-  <td><p>/oauth2/v2.0/devicecode + token poll</p></td></tr>
- <tr><td><p>Consumers device code</p></td><td><p>IfExistsResult 5 / personal account</p></td>
-  <td><p>/consumers/oauth2/v2.0/devicecode + token poll</p></td></tr>
+  <td><p>IdP return to <code>/login.srf</code> → response / interrupts / ConvergedTFA</p></td></tr>
 </tbody></table>
 
 <a id="7-appendix-figure-index"></a>
@@ -2689,30 +2388,29 @@ Each figure is embedded as a PNG; selecting a figure opens it at full
 resolution. Figures are non-normative; the sections listed are normative.
 
 <table class="protocol-table"><thead>
-  <tr><th><p>Figure</p></th><th><p>Subject</p></th><th><p>Sections</p></th><th><p>Files</p></th></tr>
+<tr><th>Figure</th><th>Subject</th><th>Sections</th><th>File</th></tr>
 </thead><tbody>
- <tr><td><p>Figure 1</p></td><td><p>End-to-end overview of the interactive authentication phases and the paths between them.</p></td><td><p>1.2</p></td><td><p><code>images/fig-01-overview.png</code></p></td></tr>
- <tr><td><p>Figure 2</p></td><td><p>Common prefix: federation discovery, authorize, Auth Config extraction and GetCredentialType.</p></td><td><p>1.3, 2.1, 2.2, 2.3, 2.4</p></td><td><p><code>images/fig-02-common-prefix.png</code></p></td></tr>
- <tr><td><p>Figure 3</p></td><td><p>Path selection from the GetCredentialType response.</p></td><td><p>1.3.1</p></td><td><p><code>images/fig-03-path-selection.png</code></p></td></tr>
- <tr><td><p>Figure 4</p></td><td><p>Passwordless Remote NGC (Authenticator) sequence.</p></td><td><p>1.3.2, 2.5, 2.6, 2.7</p></td><td><p><code>images/fig-04-remote-ngc.png</code></p></td></tr>
- <tr><td><p>Figure 5</p></td><td><p>Password submission and the branches on the login response.</p></td><td><p>1.3.3, 2.8</p></td><td><p><code>images/fig-05-password-branch.png</code></p></td></tr>
- <tr><td><p>Figure 6</p></td><td><p>Temporary Access Pass sequence (passwordless and after password login).</p></td><td><p>1.3.4, 2.15</p></td><td><p><code>images/fig-06-tap.png</code></p></td></tr>
- <tr><td><p>Figure 7</p></td><td><p>Passwordless FIDO sequence.</p></td><td><p>1.3.5, 2.14</p></td><td><p><code>images/fig-07-fido-passwordless.png</code></p></td></tr>
- <tr><td><p>Figure 8</p></td><td><p>Password plus SAS PhoneAppNotification (poll) sequence through token exchange.</p></td><td><p>1.3.6, 2.9–2.12</p></td><td><p><code>images/fig-08-sas-notification.png</code></p></td></tr>
- <tr><td><p>Figure 9</p></td><td><p>SAS PhoneAppOTP (code entry) sequence.</p></td><td><p>1.3.7, 2.10.2</p></td><td><p><code>images/fig-09-sas-otp.png</code></p></td></tr>
- <tr><td><p>Figure 10</p></td><td><p>SAS OneWaySMS and ConsolidatedTelephony sequence.</p></td><td><p>1.3.8</p></td><td><p><code>images/fig-10-sas-sms.png</code></p></td></tr>
- <tr><td><p>Figure 11</p></td><td><p>SAS TwoWayVoice (poll) sequence.</p></td><td><p>1.3.9</p></td><td><p><code>images/fig-11-sas-voice.png</code></p></td></tr>
- <tr><td><p>Figure 12</p></td><td><p>FIDO key as an MFA method after password login.</p></td><td><p>1.3.10, 2.14</p></td><td><p><code>images/fig-12-fido-from-tfa.png</code></p></td></tr>
- <tr><td><p>Figure 13</p></td><td><p>Post-authentication interrupt handling.</p></td><td><p>1.3.11</p></td><td><p><code>images/fig-13-interrupts.png</code></p></td></tr>
- <tr><td><p>Figure 14</p></td><td><p>KMSI continue sequence.</p></td><td><p>1.3.11, 2.16</p></td><td><p><code>images/fig-14-kmsi.png</code></p></td></tr>
- <tr><td><p>Figure 15</p></td><td><p>MFA registration (ProofUp) interrupt: skip resume or LoginOptions continue.</p></td><td><p>1.3.11, 2.13, 2.16</p></td><td><p><code>images/fig-15-proofup.png</code></p></td></tr>
- <tr><td><p>Figure 16</p></td><td><p>Password change (SSPR) sequence.</p></td><td><p>1.3.11, 2.17</p></td><td><p><code>images/fig-16-sspr.png</code></p></td></tr>
- <tr><td><p>Figure 17</p></td><td><p>Auto-submit HTML interstitial loop.</p></td><td><p>1.3.11, 2.18</p></td><td><p><code>images/fig-17-autosubmit.png</code></p></td></tr>
- <tr><td><p>Figure 18</p></td><td><p>Personal account and federated identity handling.</p></td><td><p>1.3.12, 2.19.2</p></td><td><p><code>images/fig-18-consumers-federated.png</code></p></td></tr>
- <tr><td><p>Figure 19</p></td><td><p>OAuth 2.0 device authorization grant sequence.</p></td><td><p>1.3.13, 2.19</p></td><td><p><code>images/fig-19-device-code.png</code></p></td></tr>
- <tr><td><p>Figure 20</p></td><td><p>v1 and v2.0 endpoints and where each is used.</p></td><td><p>2.2.2</p></td><td><p><code>images/fig-20-v1-v2.png</code></p></td></tr>
- <tr><td><p>Figure 21</p></td><td><p>State token lineage across requests.</p></td><td><p>2.3.4</p></td><td><p><code>images/fig-21-token-lineage.png</code></p></td></tr>
- <tr><td><p>Figure 22</p></td><td><p>Cookie issuance and rotation across a password plus MFA sign-in.</p></td><td><p>2.20</p></td><td><p><code>images/fig-22-cookies.png</code></p></td></tr>
- <tr><td><p>Figure 23</p></td><td><p>Error signaling channels and AADSTS code handling.</p></td><td><p>2.21</p></td><td><p><code>images/fig-23-errors.png</code></p></td></tr>
- <tr><td><p>Figure 24</p></td><td><p>Authorization response delivery forms and token exchange.</p></td><td><p>2.12, 2.22</p></td><td><p><code>images/fig-24-authz-response.png</code></p></td></tr>
+<tr><td>Figure 1</td><td>Overview of ESTS interaction and upstream protocol boundaries.</td><td>1.2</td><td><code>images/fig-01-overview.png</code></td></tr>
+<tr><td>Figure 2</td><td>Common prefix: authority selection, authorize entry, Auth Config, and credential discovery.</td><td>1.3, 2.2–2.4</td><td><code>images/fig-02-common-prefix.png</code></td></tr>
+<tr><td>Figure 3</td><td>Selection among usable offered credentials without a fixed attempt order.</td><td>1.3.1</td><td><code>images/fig-03-path-selection.png</code></td></tr>
+<tr><td>Figure 4</td><td>Passwordless Remote NGC challenge, polling, and completion.</td><td>1.3.2, 2.5–2.7</td><td><code>images/fig-04-remote-ngc.png</code></td></tr>
+<tr><td>Figure 5</td><td>Primary password authentication and response branches.</td><td>1.3.3, 2.8</td><td><code>images/fig-05-password-branch.png</code></td></tr>
+<tr><td>Figure 6</td><td>Temporary Access Pass completion without SAS BeginAuth.</td><td>1.3.4, 2.15</td><td><code>images/fig-06-tap.png</code></td></tr>
+<tr><td>Figure 7</td><td>Passwordless FIDO bootstrap and assertion state.</td><td>1.3.5, 2.14</td><td><code>images/fig-07-fido-passwordless.png</code></td></tr>
+<tr><td>Figure 8</td><td>Notification MFA with alternative SAS polling-state patterns.</td><td>1.3.6, 2.9–2.11</td><td><code>images/fig-08-sas-notification.png</code></td></tr>
+<tr><td>Figure 9</td><td>OTP submission, recoverable code rejection, and completion.</td><td>1.3.7, 2.10.2</td><td><code>images/fig-09-sas-otp.png</code></td></tr>
+<tr><td>Figure 10</td><td>SMS and ConsolidatedTelephony method mapping.</td><td>1.3.8, 2.11</td><td><code>images/fig-10-sas-sms.png</code></td></tr>
+<tr><td>Figure 11</td><td>Voice challenge and bounded approval polling.</td><td>1.3.9, 2.10.1</td><td><code>images/fig-11-sas-voice.png</code></td></tr>
+<tr><td>Figure 12</td><td>FIDO selected from ConvergedTFA, retaining initiating state.</td><td>1.3.10, 2.14</td><td><code>images/fig-12-fido-from-tfa.png</code></td></tr>
+<tr><td>Figure 13</td><td>Response dispatch across MFA, interrupts, continuations, and errors.</td><td>1.3.11, 2.22</td><td><code>images/fig-13-interrupts.png</code></td></tr>
+<tr><td>Figure 14</td><td>KMSI continuation.</td><td>1.3.11, 2.16</td><td><code>images/fig-14-kmsi.png</code></td></tr>
+<tr><td>Figure 15</td><td>ProofUp skip-resume and postponement variants.</td><td>1.3.11, 2.13, 2.16</td><td><code>images/fig-15-proofup.png</code></td></tr>
+<tr><td>Figure 16</td><td>Password-change job and alternative confirmation encodings.</td><td>2.17</td><td><code>images/fig-16-sspr.png</code></td></tr>
+<tr><td>Figure 17</td><td>Bounded continuation-form handling.</td><td>2.18</td><td><code>images/fig-17-autosubmit.png</code></td></tr>
+<tr><td>Figure 18</td><td>Federated return to ESTS and external account routing.</td><td>1.3.12</td><td><code>images/fig-18-consumers-federated.png</code></td></tr>
+<tr><td>Figure 19</td><td>ESTS entry, interaction, and upstream OAuth handoff.</td><td>2.2.2, 2.12</td><td><code>images/fig-19-v1-v2.png</code></td></tr>
+<tr><td>Figure 20</td><td>Page state, alternative SAS polling patterns, and completion state.</td><td>2.3.4</td><td><code>images/fig-20-token-lineage.png</code></td></tr>
+<tr><td>Figure 21</td><td>Cookie handling before and after MFA completion.</td><td>2.20</td><td><code>images/fig-21-cookies.png</code></td></tr>
+<tr><td>Figure 22</td><td>ESTS error channels and endpoint-specific recovery.</td><td>2.21</td><td><code>images/fig-22-errors.png</code></td></tr>
+<tr><td>Figure 23</td><td>ESTS authorization-response delivery wrappers and upstream handoff.</td><td>2.22</td><td><code>images/fig-23-authz-response.png</code></td></tr>
 </tbody></table>

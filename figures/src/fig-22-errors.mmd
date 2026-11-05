@@ -1,0 +1,16 @@
+flowchart TB
+ R["ESTS response"] --> C{"Response channel"}
+ C -->|"HTML"| H["Auth Config pgid and error fields<br/>numeric or symbolic sErrorCode"]
+ C -->|"SAS JSON"| S{"Success?"}
+ C -->|"Remote NGC JSON"| N["AuthorizationState: pending / denied / approved<br/>unknown state requires explicit failure handling"]
+ C -->|"authorization response"| O["Upstream OAuth error handling"]
+ H --> P{"Actionable interrupt or error?"}
+ P -->|"initial 50058 / advertised ProofUp skip"| A["Continue according to page state"]
+ P -->|"credential / service error"| E(["Stop or explicit recovery"])
+ S -->|"true"| F["Complete with successful state"]
+ S -->|"false: polling"| Q{"Retry"}
+ Q -->|"true within bounds"| W["Wait and poll"]
+ Q -->|"false / unrecognized"| E
+ S -->|"false: code submission"| K{"Recoverable code rejection?"}
+ K -->|"yes, even if Retry absent or false"| T["Re-prompt using retained challenge state"]
+ K -->|"terminal / unrecognized"| E

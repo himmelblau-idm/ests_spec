@@ -1,9 +1,11 @@
 flowchart TB
-  G["Credential discovery or later authentication response"] --> Q{"Which indicator?"}
-  Q -->|"IfExistsResult 5<br/>(personal Microsoft account)"| C1["POST login.microsoftonline.com/consumers/oauth2/v2.0/devicecode"]
-  C1 --> C2["Show verification_uri (consumers host, for example www.microsoft.com/link)<br/>and user_code"]
-  C2 --> C3["Poll POST /consumers/oauth2/v2.0/token<br/>until tokens or error"]
-  C3 --> OUT(["tokens<br/>no token for enrollment.manage.microsoft.com"])
-  Q -->|"Credentials.FederationRedirectUrl<br/>(external IdP)"| F1["Browser redirect to the external IdP<br/>not completed by the SAS / Remote NGC APIs"]
-  F1 --> F2["Use another grant: device authorization grant<br/>POST /{tenant}/oauth2/v2.0/devicecode (Figure 19)"]
-  Q -->|"AADSTS 50203, 16000, 50072<br/>(no advertised skip or postponement)"| F2
+ G["Credential discovery"] --> Q{"Account / credential route"}
+ Q -->|"personal-account route"| C(["External account interaction<br/>upstream references, section 2.19"])
+ Q -->|"FederationRedirectUrl"| I["External IdP sign-in<br/>IdP protocol outside ESTS"]
+ I --> R["Federation return<br/>POST returned sign-in form to authority-origin /login.srf"]
+ R --> O{"ESTS response"}
+ O -->|"authorization response"| A(["Upstream OAuth handoff"])
+ O -->|"ConvergedTFA"| M["Choose usable offered proof<br/>same SAS, FIDO, or TAP paths"]
+ O -->|"interrupt / continuation"| P["Response dispatcher, Figure 13"]
+ M --> P
+ O -->|"failure"| E(["Stop or explicit recovery"])

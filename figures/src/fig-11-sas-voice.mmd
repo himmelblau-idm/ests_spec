@@ -4,14 +4,14 @@ sequenceDiagram
   participant E as ESTS
   participant U as User phone
   Note over C,E: arrUserProofs contains TwoWayVoiceMobile, TwoWayVoiceAlternateMobile<br/>or TwoWayVoiceOffice
-  C->>E: POST /common/SAS/BeginAuth  header canary
+  C->>E: POST /common/SAS/BeginAuth  header canary (SAS form, section<br/>2.9)
   Note over C,E: {AuthMethodId: TwoWayVoice..., Method: BeginAuth, ctx, flowToken}
   E-->>C: 200 {Success: true, FlowToken, Ctx, SessionId}
   E-)U: automated call (out of band)
-  loop poll
+  loop repeat
     Note over C,E: while Success is false and Retry is true, up to the attempt limit
     C->>E: GET<br/>/common/SAS/EndAuth?authMethodId=TwoWayVoice...&pollCount={n}
-    Note over C,E: x-ms-sessionId, x-ms-flowToken, x-ms-ctx
+    Note over C,E: x-ms-sessionId, x-ms-flowToken, x-ms-ctx (one pattern from Figure 8)
     E-->>C: 200 {Success: false, ResultValue: AuthenticationPending, Retry:<br/>true}
   end
   U->>E: answers and confirms the call

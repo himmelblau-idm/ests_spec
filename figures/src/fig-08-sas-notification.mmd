@@ -1,29 +1,25 @@
 sequenceDiagram
-  autonumber
-  participant C as Client
-  participant E as ESTS
-  participant A as Authenticator app
-  Note over C,E: Password login returned pgid=ConvergedTFA (Figure 5)
-  C->>E: POST /common/SAS/BeginAuth (JSON)  header canary
-  Note over C,E: {AuthMethodId: PhoneAppNotification, Method: BeginAuth, ctx: sCtx,<br/>flowToken: sFT}
-  E-->>C: 200 {Success: true, Entropy, FlowToken, Ctx, SessionId, ...}
-  E-)A: push notification (out of band)
-  Note over C,E: Replace working flowToken and ctx with the BeginAuth FlowToken and<br/>Ctx.<br/>Display Entropy for number matching.
-  loop poll
-    Note over C,E: pollCount = 1, 2, ... up to iMaxPollAttempts, interval<br/>iPollingInterval (about 5 s)
-    C->>E: GET<br/>/common/SAS/EndAuth?authMethodId=PhoneAppNotification&pollCount={n}
-    Note over C,E: headers x-ms-sessionId ($Config.sessionId), x-ms-flowToken, x-ms-ctx
-    E-->>C: 200 {Success: false, ResultValue: AuthenticationPending, Retry:<br/>true}
-  end
-  A->>E: user approves
-  C->>E: GET /common/SAS/EndAuth?...
-  E-->>C: 200 {Success: true, FlowToken, Ctx, MobileAppAuthDetails}
-  C->>E: POST /common/SAS/ProcessAuth (form)
-  Note over C,E: request=Ctx, mfaAuthMethod, login, flowToken, canary
-  alt authorization code issued
-    E-->>C: 302 Location: {redirect_uri}?code=...
-  else interrupt
-    E-->>C: 200 HTML (ConvergedProofUpRedirect, KMSI, ...) (Figure 13)
-  end
-  C->>E: POST /{tenant}/oauth2/token
-  E-->>C: 200 access_token, refresh_token, id_token
+ autonumber
+ participant C as Client
+ participant E as ESTS
+ participant A as User notification app
+ Note over C,E: ConvergedTFA offers PhoneAppNotification or CompanionAppsNotification
+ C->>E: POST {urlBeginAuth} (JSON), header canary
+ Note over C,E: AuthMethodId=selected method, Method=BeginAuth, ctx=sCtx, flowToken=sFT
+ E-->>C: Success=true, FlowToken, Ctx, SessionId, Entropy
+ E-)A: challenge notification
+ Note over C,E: Display Entropy when applicable, retain MFA page state separately<br/>SAS canary header forms: page canary or apiCanary (section 2.9)
+ loop repeat
+   Note over C,E: pending within attempt and deadline bounds
+  C->>E: GET {urlEndAuth}?authMethodId={selected}&pollCount={n}
+  Note over C,E: x-ms-sessionId, x-ms-flowToken, x-ms-ctx
+  E-->>C: Success=false, Retry=true, pending state
+  Note over C,E: Retained-state pattern: page sessionId plus BeginAuth token/context<br/>Response-state pattern: preceding SAS SessionId/token/context
+ end
+ A->>E: user approves
+ C->>E: GET {urlEndAuth} (next poll)
+ E-->>C: Success=true, FlowToken, Ctx
+ C->>E: POST {MFA-page urlPost} (form)
+ Note over C,E: request=successful Ctx, flowToken=successful FlowToken,<br/>mfaAuthMethod=selected, login, canary=MFA-page canary
+ E-->>C: Authorization response, interrupt, continuation, or error
+ Note over C,E: Dispatch response, OAuth handoff only after authorization response

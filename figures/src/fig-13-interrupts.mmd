@@ -1,14 +1,18 @@
 flowchart TB
-  A["MFA success<br/>(ProcessAuth, passwordless login, FIDO or TAP post)"] --> B{"Response"}
-  B -->|"302 / JS redirect / anchor<br/>with code"| T(["Authorization response (Figure 24)"])
-  B -->|"200 HTML"| P{"Parse $Config pgid"}
-  B -->|"auto-submit form<br/>(Working..., Click Submit to continue)"| AS["Auto-submit loop (Figure 17)"]
-  P -->|"KmsiInterrupt"| K["POST urlPost with LoginOptions=1<br/>(Figure 14)"]
-  P -->|"ConvergedProofUpRedirect<br/>with a skip or postponement option"| PU["POST advertised skip-resume URL<br/>or LoginOptions=1 if postponement is offered<br/>(Figure 15)"]
-  P -->|"ConvergedChangePassword"| SS["SSPR begin, poll, confirm<br/>(Figure 16)"]
-  P -->|"ConvergedConsent"| CO(["terminal for this protocol"])
-  P -->|"unhandled error after checking pgid"| ER(["error (Figure 23)"])
-  K --> B
-  PU --> B
-  AS --> B
-  SS -->|"restart sign-in with new password"| R(["new authorize request"])
+ A["Response after primary authentication or proof completion"] --> B{"Classify response"}
+ B -->|"authorization response"| T(["ESTS complete<br/>upstream OAuth handoff"])
+ B -->|"continuation form"| AS["Submit genuine continuation<br/>bounded hops / deadline, Figure 17"]
+ B -->|"HTML with Auth Config"| P{"Page state and errors"}
+ P -->|"ConvergedTFA"| M["Select another offered usable proof"]
+ P -->|"KmsiInterrupt"| K["POST advertised continuation, Figure 14"]
+ P -->|"ProofUp with skip URL"| S["Skip resume, Figure 15"]
+ P -->|"ProofUp with offered postponement"| D["Postponement continuation, Figure 15"]
+ P -->|"ProofUp without continuation / consent"| I(["External interaction required"])
+ P -->|"ConvergedChangePassword"| SS["SSPR, Figure 16"]
+ P -->|"credential or service failure"| E(["Stop or explicit recovery, Figure 22"])
+ AS --> B
+ M --> B
+ K --> B
+ S --> B
+ D --> B
+ SS --> B

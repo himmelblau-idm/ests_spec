@@ -11,10 +11,10 @@ FIGURE_NAMES := fig-01-overview fig-02-common-prefix fig-03-path-selection \
 	fig-04-remote-ngc fig-05-password-branch fig-06-tap \
 	fig-07-fido-passwordless fig-08-sas-notification fig-09-sas-otp \
 	fig-10-sas-sms fig-11-sas-voice fig-12-fido-from-tfa \
-	fig-13-interrupts fig-14-kmsi fig-15-proofup fig-16-sspr \
-	fig-17-autosubmit fig-18-consumers-federated fig-19-device-code \
-	fig-20-v1-v2 fig-21-token-lineage fig-22-cookies fig-23-errors \
-	fig-24-authz-response
+	fig-13-interrupts fig-14-kmsi fig-15-proofup \
+	fig-16-sspr fig-17-autosubmit fig-18-consumers-federated \
+	fig-19-v1-v2 fig-20-token-lineage fig-21-cookies \
+	fig-22-errors fig-23-authz-response
 FIGURE_SOURCES := $(addprefix figures/src/,$(addsuffix .mmd,$(FIGURE_NAMES)))
 FIGURE_IMAGES := $(patsubst figures/src/%.mmd,images/%.png,$(FIGURE_SOURCES))
 

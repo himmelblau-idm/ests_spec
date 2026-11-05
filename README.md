@@ -6,10 +6,10 @@ It documents the HTTP APIs and flow state used to authenticate users and
 obtain OAuth 2.0 authorization codes without rendering the eSTS sign-in pages
 in a browser UI.
 
-The Himmelblau project maintains this specification for other implementors.
 It covers authentication discovery, passwordless and password-based sign-in,
-MFA challenges, post-authentication interrupts, and token exchange, as well
-as the OAuth 2.0 device authorization grant.
+MFA challenges, post-authentication interrupts, and federated return to eSTS.
+Standard OAuth/OIDC behavior, including token exchange and the device
+authorization grant, is delegated to upstream references.
 
 The source document is [ests-spec.md](ests-spec.md). Generated HTML and
 PDF versions are produced from that file for easier reading and distribution.
@@ -57,14 +57,14 @@ make
 ```
 
 The build generates Mermaid sources from `figures/mkfigs.py`, renders the
-24 figures into `./images`, creates `ests-spec.html` with Pandoc, and renders
+23 figures into `./images`, creates `ests-spec.html` with Pandoc, and renders
 `ests-spec.pdf` using the detected browser in headless mode. Changes to the
 figure generator, Mermaid sources, or rendering configuration rebuild affected
 images and then the HTML and PDF. Parallel builds (`make -j`) are supported.
 
 Edit figure content in `figures/mkfigs.py`; `figures/src/*.mmd` are generated
 files and are overwritten when the generator runs. Figure numbers are
-remapped near the end of that script, so check cross-references after edits.
+explicit in the generator keys; keep cross-references aligned after edits.
 When adding or removing a figure, also update `FIGURE_NAMES` in the Makefile
 and the specification's figure index.
 

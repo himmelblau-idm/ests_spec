@@ -1,71 +1,68 @@
-F={}
-F['fig-01-overview']='''flowchart TB
-  A["1. Federation provider discovery<br/>GET odc.officeapps.live.com/odc/v2.1/federationProvider<br/>(optional)"] --> B
-  B["2. Authorize<br/>GET /{tenant}/oauth2/authorize<br/>200 HTML with $Config (sFT, sCtx, canary)"] --> C
-  C["3. GetCredentialType<br/>POST /common/GetCredentialType<br/>capability flags and credential parameter blocks"] --> D{"Path selection<br/>(Figure 2)"}
-  D -->|"RemoteNgcParams"| P1["Passwordless Remote NGC<br/>GetOneTimeCode, DeviceCodeStatus poll, login"]
-  D -->|"FidoParams"| P2["Passwordless FIDO<br/>urlFidoLogin, assertion post"]
-  D -->|"HasAccessPass"| P3["Passwordless TAP<br/>post accesspass"]
-  D -->|"HasPassword"| P4["Password<br/>POST /{tenant}/login"]
-  D -->|"FederationRedirectUrl"| P5["Federated IdP<br/>(browser redirect, out of scope)"]
-  D -->|"IfExistsResult 5"| P6["Consumers device code grant"]
-  P4 --> E{"Login outcome<br/>(Figure 5)"}
-  E -->|"ConvergedTFA"| M["SAS MFA<br/>BeginAuth, EndAuth, ProcessAuth<br/>or FIDO / TAP"]
-  E -->|"interrupt page"| I["Post-authentication interrupts<br/>(Figure 13)"]
-  E -->|"302 with code"| T
-  P1 --> I
-  P2 --> I
-  P3 --> I
-  M --> I
-  I --> T["Authorization response<br/>(Figure 20)<br/>extract code"]
-  P1 -->|"302 with code"| T
-  T --> TK["Token exchange<br/>POST /{tenant}/oauth2/token<br/>grant_type=authorization_code"]
-  TK --> OUT(["access_token, refresh_token, id_token"])
+"""Generate numbered ESTS figures; edit this file, not src/*.mmd."""
+
+F = {}
+
+F['fig-01-overview'] = '''flowchart TB
+ A["Select tenant and authority<br/>external prerequisite"] --> B["OAuth authorize entry<br/>200 HTML with Auth Config"]
+ B --> C["GetCredentialType<br/>advertise actual client capabilities"]
+ C --> D{"Choose a usable offered path<br/>client capabilities and user choice"}
+ D --> N["Remote NGC<br/>GetOneTimeCode, DeviceCodeStatus, login"]
+ D --> F["FIDO bootstrap and assertion"]
+ D --> T["Temporary Access Pass"]
+ D --> P["Password login"]
+ D --> I["External IdP sign-in<br/>return to ESTS /login.srf"]
+ D --> X["External account flow<br/>upstream protocol"]
+ P --> R{"Classify response"}
+ I --> R
+ N --> R
+ F --> R
+ T --> R
+ R -->|"ConvergedTFA"| M["Choose offered MFA proof<br/>SAS, FIDO, or TAP"]
+ M --> R
+ R -->|"interrupt / continuation"| H["Handle advertised continuation"]
+ H --> R
+ R -->|"authorization response"| O(["End ESTS interaction<br/>upstream OAuth handoff, section 2.12"])
+ R -->|"failure"| E(["Stop or explicit recovery"])
 '''
-F['fig-02-path-selection']='''flowchart TB
-  S["GetCredentialType response"] --> Q0{"IfExistsResult"}
-  Q0 -->|"1 (no account)"| X1(["abort sign-in"])
-  Q0 -->|"2 (throttled) or 4 (server error)"| X2(["wait and retry"])
-  Q0 -->|"5 (personal account)"| DC["Consumers device code grant<br/>(Figure 19)"]
-  Q0 -->|"0 or 6"| Q1{"Credentials.HasAccessPass<br/>true?"}
-  Q1 -->|yes| TAP["Passwordless TAP<br/>(Figure 12)"]
-  Q1 -->|no| Q2{"RemoteNgcParams<br/>non-null?"}
-  Q2 -->|yes| NGC["Passwordless Remote NGC<br/>(Figure 4)"]
-  Q2 -->|no| Q3{"FidoParams<br/>non-null?"}
-  Q3 -->|yes| FIDO["Passwordless FIDO<br/>(Figure 10)"]
-  Q3 -->|no| Q4{"FederationRedirectUrl<br/>present?"}
-  Q4 -->|yes| FED["Federated IdP<br/>(Figure 19)"]
-  Q4 -->|no| Q5{"HasPassword<br/>true?"}
-  Q5 -->|yes| PW["Password submission<br/>(Figure 5)"]
-  Q5 -->|no| X3(["no supported path"])
+
+F['fig-02-common-prefix'] = '''sequenceDiagram
+ autonumber
+ participant C as Client
+ participant E as ESTS
+ Note over C,E: Select the intended authority using upstream guidance
+ C->>E: GET /{tenant}/oauth2/authorize<br/>upstream OAuth request plus applicable ESTS extensions
+ E-->>C: 200 HTML with Auth Config and cookies
+ Note over C,E: Parse Auth Config without executing scripts<br/>retain page state and advertised endpoint URLs
+ C->>E: POST {urlGetCredentialType}<br/>username, supported capabilities, originalRequest=sCtx, flowToken=sFT
+ E-->>C: JSON: Credentials, IfExistsResult, FlowToken, apiCanary
+ Note over C,E: Choose a usable offered credential<br/>the listed paths do not impose an attempt order
 '''
-F['fig-03-common-prefix']='''sequenceDiagram
-  autonumber
-  participant C as Client
-  participant O as odc.officeapps.live.com
-  participant E as ESTS<br/>login.microsoftonline.com
-  opt federation discovery
-    C->>O: GET /odc/v2.1/federationProvider?domain={domain}
-    O-->>C: 200 JSON: tenantId, authority_host, endpoint[OrgId, MSA]
-  end
-  C->>E: GET /{tenant}/oauth2/authorize<br/>client_id, response_type=code, redirect_uri, client-request-id, resource, optional OpenID Connect scope, ...
-  E-->>C: 200 text/html + Set-Cookie (buid, esctx, esctx-{id}, fpc, ...)
-  Note over C,E: Extract the $Config object from the script element.<br/>Keep sFT, sCtx, canary, apiCanary, sessionId, pgid,<br/>url* values. sErrorCode 50058 on this page is not an error.
-  C->>E: POST /common/GetCredentialType?mkt=en-US (JSON)<br/>username, capability flags, originalRequest=sCtx, flowToken=sFT
-  E-->>C: 200 JSON (GetCredentialType response)<br/>IfExistsResult, Credentials{HasPassword, RemoteNgcParams, FidoParams, HasAccessPass, FederationRedirectUrl}, FlowToken, apiCanary
-  Note over C,E: Select path from populated parameter blocks (Figure 2)
+
+F['fig-03-path-selection'] = '''flowchart TB
+ S["GetCredentialType"] --> A{"Account routing"}
+ A -->|"no account / throttled / error"| E(["Handle discovery outcome"])
+ A -->|"personal account route"| X(["External sign-in<br/>upstream references, section 2.19"])
+ A -->|"organizational route"| C{"Select offered credential<br/>with user choice and actual client support"}
+ C -->|"HasAccessPass"| T["TAP, Figure 6"]
+ C -->|"RemoteNgcParams"| N["Remote NGC, Figure 4"]
+ C -->|"FidoParams and usable authenticator"| F["FIDO, Figure 7"]
+ C -->|"FederationRedirectUrl"| I["IdP sign-in and ESTS return, Figure 18"]
+ C -->|"HasPassword"| P["Password login, Figure 5"]
+ C -->|"no usable path"| U(["External interaction required"])
+ C -.- H["PrefCredential is a hint<br/>not a fixed attempt order"]
 '''
-F['fig-04-remote-ngc']='''sequenceDiagram
+
+F['fig-04-remote-ngc'] = '''sequenceDiagram
   autonumber
   participant C as Client
   participant E as ESTS
   participant A as Authenticator app<br/>(user device)
-  Note over C,E: Common prefix: authorize and GetCredentialType (Figure 3)<br/>Credentials.RemoteNgcParams{SessionIdentifier, Entropy, Application}
+  Note over C,E: Common prefix: authorize and GetCredentialType (Figure 2)<br/>Credentials.RemoteNgcParams{SessionIdentifier, Entropy, Application}
   C->>E: POST /common/GetOneTimeCode (JSON)<br/>headers: canary, client-request-id<br/>body: Channel=Authenticator, FlowToken=sFT, OriginalRequest=sCtx,<br/>OldDeviceCode=RemoteNgcParams.SessionIdentifier
   E-->>C: 200 JSON: RemoteNgcParams{SessionIdentifier, Entropy, DefaultType: 3, UserCode}
   E-)A: push notification (out of band)
-  Note over C,E: Display Entropy (number match) to the user
-  loop while AuthorizationState is 0 (about every 5 seconds, stop on timeout)
+  Note over C,E: Use returned SessionIdentifier and Entropy; display number match
+  loop pending within a finite local deadline; stop on cancellation or failure
     C->>E: POST {urlSessionState}?code={SessionIdentifier}<br/>header canary, body {DeviceCode}
     E-->>C: 200 {AuthorizationState: 0}  (pending)
   end
@@ -75,14 +72,15 @@ F['fig-04-remote-ngc']='''sequenceDiagram
   C->>E: POST /{tenant}/login (form)<br/>code, psRNGCSLK, login, loginfmt, psRNGCEntropy,<br/>flowToken, canary, ctx
   alt authorization code issued
     E-->>C: 302 Location: {redirect_uri}?code=...&session_state=...<br/>+ ESTSAUTH, ESTSAUTHPERSISTENT, CCState, ...
-    C->>E: POST /{tenant}/oauth2/token (code exchange, Figure 20)
+    Note over C,E: ESTS complete: upstream OAuth handoff (section 2.12)
   else interrupt
     E-->>C: 200 HTML with $Config (KMSI, ProofUp, ...) (Figure 13)
   end
 '''
-F['fig-05-password-branch']='''flowchart LR
+
+F['fig-05-password-branch'] = '''flowchart LR
   A["POST /{tenant}/login<br/>login, passwd, ctx, flowToken, canary,<br/>client_id, client-request-id"] --> B{"Response"}
-  B -->|"302 with code"| T(["Authorization response (Figure 20)<br/>no additional MFA challenge"])
+  B -->|"302 with code"| T(["Authorization response (Figure 23)<br/>no additional MFA challenge"])
   B -->|"200 pgid=ConvergedTFA<br/>arrUserProofs, urlBeginAuth, urlEndAuth, urlPost"| M{"Select an arrUserProofs entry"}
   B -->|"200 pgid=KmsiInterrupt"| K["KMSI continue (Figure 14)"]
   B -->|"200 pgid=ConvergedProofUpRedirect"| PU["MFA registration interrupt (Figure 15)"]
@@ -90,126 +88,15 @@ F['fig-05-password-branch']='''flowchart LR
   B -->|"200 pgid=ConvergedConsent"| CO(["terminal: consent required"])
   B -->|"200 auto-submit HTML"| AS["Auto-submit loop (Figure 17)"]
   B -->|"200 Auth Config with sErrorCode<br/>50126, 50053, ..."| ER(["credential failure (Figure 22)"])
-  M -->|"PhoneAppNotification, CompanionAppsNotification"| S1["SAS poll (Figure 6)"]
-  M -->|"PhoneAppOTP"| S2["SAS OTP (Figure 7)"]
-  M -->|"OneWaySMS, ConsolidatedTelephony"| S3["SAS SMS (Figure 8)"]
-  M -->|"TwoWayVoiceMobile, TwoWayVoiceAlternateMobile, TwoWayVoiceOffice"| S4["SAS voice (Figure 9)"]
-  M -->|"FidoKey"| S5["FIDO (Figure 11)"]
-  M -->|"AccessPass"| S6["TAP (Figure 12)"]
+  M -->|"PhoneAppNotification, CompanionAppsNotification"| S1["SAS poll (Figure 8)"]
+  M -->|"PhoneAppOTP"| S2["SAS OTP (Figure 9)"]
+  M -->|"OneWaySMS, ConsolidatedTelephony"| S3["SAS SMS (Figure 10)"]
+  M -->|"TwoWayVoiceMobile, TwoWayVoiceAlternateMobile, TwoWayVoiceOffice"| S4["SAS voice (Figure 11)"]
+  M -->|"FidoKey"| S5["FIDO (Figure 12)"]
+  M -->|"AccessPass"| S6["TAP (Figure 6)"]
 '''
-F['fig-06-sas-notification']='''sequenceDiagram
-  autonumber
-  participant C as Client
-  participant E as ESTS
-  participant A as Authenticator app
-  Note over C,E: Password login returned pgid=ConvergedTFA (Figure 5)
-  C->>E: POST /common/SAS/BeginAuth (JSON)  header canary<br/>{AuthMethodId: PhoneAppNotification, Method: BeginAuth, ctx: sCtx, flowToken: sFT}
-  E-->>C: 200 {Success: true, Entropy, FlowToken, Ctx, SessionId, ...}
-  E-)A: push notification (out of band)
-  Note over C,E: Replace working flowToken and ctx with the BeginAuth FlowToken and Ctx.<br/>Display Entropy for number matching.
-  loop pollCount = 1, 2, ... up to iMaxPollAttempts, interval iPollingInterval (about 5 s)
-    C->>E: GET /common/SAS/EndAuth?authMethodId=PhoneAppNotification&pollCount={n}<br/>headers x-ms-sessionId ($Config.sessionId), x-ms-flowToken, x-ms-ctx
-    E-->>C: 200 {Success: false, ResultValue: AuthenticationPending, Retry: true}
-  end
-  A->>E: user approves
-  C->>E: GET /common/SAS/EndAuth?...
-  E-->>C: 200 {Success: true, FlowToken, Ctx, MobileAppAuthDetails}
-  C->>E: POST /common/SAS/ProcessAuth (form)<br/>request=Ctx, mfaAuthMethod, login, flowToken, canary
-  alt authorization code issued
-    E-->>C: 302 Location: {redirect_uri}?code=...
-  else interrupt
-    E-->>C: 200 HTML (ConvergedProofUpRedirect, KMSI, ...) (Figure 13)
-  end
-  C->>E: POST /{tenant}/oauth2/token
-  E-->>C: 200 access_token, refresh_token, id_token
-'''
-F['fig-07-sas-otp']='''sequenceDiagram
-  autonumber
-  participant C as Client
-  participant E as ESTS
-  participant U as User / Authenticator app
-  Note over C,E: ConvergedTFA arrUserProofs contains PhoneAppOTP
-  C->>E: POST /common/SAS/BeginAuth  header canary<br/>{AuthMethodId: PhoneAppOTP, Method: BeginAuth, ctx, flowToken}
-  E-->>C: 200 {Success: true, FlowToken, Ctx, SessionId}
-  U-->>C: TOTP code (out of band, from the app)
-  C->>E: POST /common/SAS/EndAuth (JSON)  header canary<br/>{AdditionalAuthData: otp, AuthMethodId, SessionId, FlowToken, Ctx, Method: EndAuth}
-  alt code accepted
-    E-->>C: 200 {Success: true, FlowToken, Ctx}
-    C->>E: POST /common/SAS/ProcessAuth (form)<br/>request, mfaAuthMethod=PhoneAppOTP, login, flowToken, canary
-    E-->>C: 302 code, or 200 interrupt HTML
-  else code rejected
-    E-->>C: 200 {Success: false, Retry: false, ErrCode}
-  end
-'''
-F['fig-08-sas-sms']='''sequenceDiagram
-  autonumber
-  participant C as Client
-  participant E as ESTS
-  participant U as User phone
-  Note over C,E: arrUserProofs contains OneWaySMS or ConsolidatedTelephony<br/>(display carries a masked phone number)
-  C->>E: POST /common/SAS/BeginAuth  header canary<br/>{AuthMethodId: OneWaySMS | ConsolidatedTelephony, Method: BeginAuth, ctx, flowToken}
-  E-->>C: 200 {Success: true, FlowToken, Ctx, SessionId}
-  E-)U: SMS code (out of band)
-  U-->>C: SMS code
-  C->>E: POST /common/SAS/EndAuth (JSON)  header canary<br/>{AdditionalAuthData: smsCode, AuthMethodId, SessionId, FlowToken, Ctx, Method: EndAuth}
-  E-->>C: 200 {Success: true, FlowToken, Ctx}
-  C->>E: POST /common/SAS/ProcessAuth (form)<br/>mfaAuthMethod=OneWaySMS  (even when the method was ConsolidatedTelephony)
-  E-->>C: 302 code, or 200 interrupt HTML
-'''
-F['fig-09-sas-voice']='''sequenceDiagram
-  autonumber
-  participant C as Client
-  participant E as ESTS
-  participant U as User phone
-  Note over C,E: arrUserProofs contains TwoWayVoiceMobile, TwoWayVoiceAlternateMobile or TwoWayVoiceOffice
-  C->>E: POST /common/SAS/BeginAuth  header canary<br/>{AuthMethodId: TwoWayVoice..., Method: BeginAuth, ctx, flowToken}
-  E-->>C: 200 {Success: true, FlowToken, Ctx, SessionId}
-  E-)U: automated call (out of band)
-  loop while Success is false and Retry is true, up to the attempt limit
-    C->>E: GET /common/SAS/EndAuth?authMethodId=TwoWayVoice...&pollCount={n}<br/>x-ms-sessionId, x-ms-flowToken, x-ms-ctx
-    E-->>C: 200 {Success: false, ResultValue: AuthenticationPending, Retry: true}
-  end
-  U->>E: answers and confirms the call
-  C->>E: GET /common/SAS/EndAuth?...
-  E-->>C: 200 {Success: true, FlowToken, Ctx}
-  C->>E: POST /common/SAS/ProcessAuth (form)<br/>request, mfaAuthMethod (same value), login, flowToken, canary
-  E-->>C: 302 code, or 200 interrupt HTML
-'''
-F['fig-10-fido-passwordless']='''sequenceDiagram
-  autonumber
-  participant C as Client
-  participant K as FIDO authenticator<br/>(local, outside ESTS HTTP)
-  participant E as ESTS<br/>login.microsoftonline.com
-  participant EF as login.microsoft.com
-  Note over C,E: GetCredentialType returned Credentials.FidoParams{AllowList, ...}<br/>(request flag isFidoSupported=true)
-  C->>EF: POST {urlFidoLogin} (/{tenant}/fido/get?uiflavor=Host)<br/>browser User-Agent, flow=mfa, allowedIdentities, canary, serverChallenge, postBackUrl, postBackUrlAad,<br/>cancelUrl, resumeUrl, correlationId, credentialsJson=AllowList[0], ctx, username, loginCanary
-  EF-->>C: 200 HTML with a new $Config<br/>sFidoChallenge, sCrossDomainCanary, sessionId, sFT, sCtx, canary, urlPost
-  C->>K: challenge from sFidoChallenge
-  K-->>C: WebAuthn assertion
-  C->>E: POST {urlPost} (form)<br/>type=23, ps=23, assertion, lmcCanary=sCrossDomainCanary,<br/>hpgrequestid=sessionId, ctx, canary, flowToken
-  alt code delivered
-    E-->>C: 302 Location with code<br/>or 200 HTML whose anchor href carries code
-  else interrupt or auto-submit
-    E-->>C: 200 HTML (Figure 13, Figure 17)
-  end
-'''
-F['fig-11-fido-from-tfa']='''sequenceDiagram
-  autonumber
-  participant C as Client
-  participant K as FIDO authenticator<br/>(local)
-  participant E as ESTS
-  participant EF as login.microsoft.com
-  C->>E: POST /{tenant}/login  (username and password, Figure 5)
-  E-->>C: 200 pgid=ConvergedTFA<br/>arrUserProofs includes FidoKey<br/>Auth Config also contains arrFidoAllowList, urlFidoLogin, iAllowedIdentities, urlPost
-  Note over C,E: BeginAuth is not used for FidoKey
-  C->>EF: POST {urlFidoLogin}<br/>credentialsJson=arrFidoAllowList[0], other fields as in Figure 10
-  EF-->>C: 200 HTML with a new $Config<br/>sFidoChallenge, sCrossDomainCanary, sessionId, sFT, sCtx, canary, urlPost
-  C->>K: challenge
-  K-->>C: assertion
-  C->>E: POST {urlPost}: type=23, ps=23, assertion, lmcCanary, hpgrequestid, ctx, canary, flowToken
-  E-->>C: 302 with code, 200 HTML anchor with code, or interrupt HTML
-'''
-F['fig-12-tap']='''sequenceDiagram
+
+F['fig-06-tap'] = '''sequenceDiagram
   autonumber
   participant C as Client
   participant E as ESTS
@@ -228,22 +115,156 @@ F['fig-12-tap']='''sequenceDiagram
     E-->>C: 200 HTML ($Config or auto-submit form)
   end
 '''
-F['fig-13-interrupts']='''flowchart TB
-  A["MFA success<br/>(ProcessAuth, passwordless login, FIDO or TAP post)"] --> B{"Response"}
-  B -->|"302 / JS redirect / anchor<br/>with code"| T(["Authorization response (Figure 20)"])
-  B -->|"200 HTML"| P{"Parse $Config pgid"}
-  B -->|"auto-submit form<br/>(Working..., Click Submit to continue)"| AS["Auto-submit loop (Figure 17)"]
-  P -->|"KmsiInterrupt"| K["POST urlPost with LoginOptions=1<br/>(Figure 14)"]
-  P -->|"ConvergedProofUpRedirect<br/>with a skip or postponement option"| PU["POST advertised skip-resume URL<br/>or LoginOptions=1 if postponement is offered<br/>(Figure 15)"]
-  P -->|"ConvergedChangePassword"| SS["SSPR begin, poll, confirm<br/>(Figure 16)"]
-  P -->|"ConvergedConsent"| CO(["terminal for this protocol"])
-  P -->|"unhandled error after checking pgid"| ER(["error (Figure 22)"])
-  K --> B
-  PU --> B
-  AS --> B
-  SS -->|"restart sign-in with new password"| R(["new authorize request"])
+
+F['fig-07-fido-passwordless'] = '''sequenceDiagram
+  autonumber
+  participant C as Client
+  participant K as FIDO authenticator<br/>(local, outside ESTS HTTP)
+  participant E as ESTS<br/>login.microsoftonline.com
+  participant EF as login.microsoft.com
+  Note over C,E: GetCredentialType returned Credentials.FidoParams{AllowList, ...}<br/>(request flag isFidoSupported=true)
+  C->>EF: POST {urlFidoLogin} (/{tenant}/fido/get?uiflavor=Host)<br/>browser User-Agent, flow=mfa, allowedIdentities, canary, serverChallenge, postBackUrl, postBackUrlAad,<br/>cancelUrl, resumeUrl, correlationId, credentialsJson=AllowList[0] unchanged, ctx, username, loginCanary
+  EF-->>C: 200 HTML with a new $Config<br/>sFidoChallenge, sCrossDomainCanary, sessionId
+  Note over C,E: Keep initiating page urlPost, sFT, sCtx, canary<br/>Take challenge, cross-domain canary, and sessionId from bootstrap
+  C->>K: challenge from sFidoChallenge
+  K-->>C: WebAuthn assertion
+  C->>E: POST {initiating-page urlPost} (form)<br/>type=23, ps=23, assertion, lmcCanary=sCrossDomainCanary,<br/>hpgrequestid=sessionId, ctx, canary, flowToken
+  alt code delivered
+    E-->>C: 302 Location with code<br/>or 200 HTML whose anchor href carries code
+  else another proof, interrupt, or auto-submit
+    E-->>C: 200 HTML (Figure 13, Figure 17)
+  end
 '''
-F['fig-14-kmsi']='''sequenceDiagram
+
+F['fig-08-sas-notification'] = '''sequenceDiagram
+ autonumber
+ participant C as Client
+ participant E as ESTS
+ participant A as User notification app
+ Note over C,E: ConvergedTFA offers PhoneAppNotification or CompanionAppsNotification
+ C->>E: POST {urlBeginAuth} (JSON), header canary<br/>AuthMethodId=selected method, Method=BeginAuth, ctx=sCtx, flowToken=sFT
+ E-->>C: Success=true, FlowToken, Ctx, SessionId, Entropy
+ E-)A: challenge notification
+ Note over C,E: Display Entropy when applicable; retain MFA page state separately<br/>SAS canary header forms: page canary or apiCanary (section 2.9)
+ loop pending within attempt and deadline bounds
+  C->>E: GET {urlEndAuth}?authMethodId={selected}&pollCount={n}<br/>x-ms-sessionId, x-ms-flowToken, x-ms-ctx
+  E-->>C: Success=false, Retry=true, pending state
+  Note over C,E: Retained-state pattern: page sessionId plus BeginAuth token/context<br/>Response-state pattern: preceding SAS SessionId/token/context
+ end
+ A->>E: user approves
+ C->>E: GET {urlEndAuth} (next poll)
+ E-->>C: Success=true, FlowToken, Ctx
+ C->>E: POST {MFA-page urlPost} (form)<br/>request=successful Ctx, flowToken=successful FlowToken,<br/>mfaAuthMethod=selected, login, canary=MFA-page canary
+ E-->>C: Authorization response, interrupt, continuation, or error
+ Note over C,E: Dispatch response; OAuth handoff only after authorization response
+'''
+
+F['fig-09-sas-otp'] = '''sequenceDiagram
+ autonumber
+ participant C as Client
+ participant E as ESTS
+ participant U as User
+ Note over C,E: ConvergedTFA offers PhoneAppOTP
+ C->>E: POST {urlBeginAuth}<br/>AuthMethodId=PhoneAppOTP, Method=BeginAuth, ctx, flowToken; SAS canary header
+ E-->>C: Success=true, FlowToken, Ctx, SessionId
+ loop user submits a code within local deadline
+  U-->>C: OTP as a string, preserving leading zeroes
+  C->>E: POST {urlEndAuth} (JSON)<br/>AdditionalAuthData=trimmed OTP, AuthMethodId, Method=EndAuth,<br/>BeginAuth SessionId, FlowToken, Ctx; SAS canary header
+  alt recoverable code rejection
+   E-->>C: Success=false, diagnostic code-rejection details<br/>Retry may be absent or false
+   Note over C,E: Re-prompt using retained challenge state; do not repeat BeginAuth<br/>Do not infer recoverability merely from presence of Message
+  else terminal or unrecognized failure
+   E-->>C: Failure or HTML service error
+   break terminal failure
+    Note over C,E: Stop or explicit recovery; no ProcessAuth
+   end
+  else code accepted
+   E-->>C: Success=true, FlowToken, Ctx
+   C->>E: POST {MFA-page urlPost}<br/>request=successful Ctx, flowToken=successful FlowToken,<br/>mfaAuthMethod=PhoneAppOTP, login, MFA-page canary
+   E-->>C: Authorization response, interrupt, continuation, or error
+   break code accepted
+    Note over C,E: Leave code-entry loop and dispatch completion response
+   end
+  end
+ end
+'''
+
+F['fig-10-sas-sms'] = '''sequenceDiagram
+  autonumber
+  participant C as Client
+  participant E as ESTS
+  participant U as User phone
+  Note over C,E: arrUserProofs contains OneWaySMS or ConsolidatedTelephony<br/>(display carries a masked phone number)
+  C->>E: POST /common/SAS/BeginAuth  header canary (SAS form, section 2.9)<br/>{AuthMethodId: OneWaySMS | ConsolidatedTelephony, Method: BeginAuth, ctx, flowToken}
+  E-->>C: 200 {Success: true, FlowToken, Ctx, SessionId}
+  E-)U: SMS code (out of band)
+  U-->>C: SMS code
+  C->>E: POST /common/SAS/EndAuth (JSON)  header canary (SAS form, section 2.9)<br/>{AdditionalAuthData: smsCode, AuthMethodId, SessionId, FlowToken, Ctx, Method: EndAuth}
+  E-->>C: 200 {Success: true, FlowToken, Ctx}
+  Note over C,E: Code rejection: apply code-entry retry rules (Figure 9)
+  C->>E: POST /common/SAS/ProcessAuth (form)<br/>mfaAuthMethod=OneWaySMS  (even when the method was ConsolidatedTelephony)
+  E-->>C: 302 code, or 200 interrupt HTML
+'''
+
+F['fig-11-sas-voice'] = '''sequenceDiagram
+  autonumber
+  participant C as Client
+  participant E as ESTS
+  participant U as User phone
+  Note over C,E: arrUserProofs contains TwoWayVoiceMobile, TwoWayVoiceAlternateMobile or TwoWayVoiceOffice
+  C->>E: POST /common/SAS/BeginAuth  header canary (SAS form, section 2.9)<br/>{AuthMethodId: TwoWayVoice..., Method: BeginAuth, ctx, flowToken}
+  E-->>C: 200 {Success: true, FlowToken, Ctx, SessionId}
+  E-)U: automated call (out of band)
+  loop while Success is false and Retry is true, up to the attempt limit
+    C->>E: GET /common/SAS/EndAuth?authMethodId=TwoWayVoice...&pollCount={n}<br/>x-ms-sessionId, x-ms-flowToken, x-ms-ctx (one pattern from Figure 8)
+    E-->>C: 200 {Success: false, ResultValue: AuthenticationPending, Retry: true}
+  end
+  U->>E: answers and confirms the call
+  C->>E: GET /common/SAS/EndAuth?...
+  E-->>C: 200 {Success: true, FlowToken, Ctx}
+  C->>E: POST /common/SAS/ProcessAuth (form)<br/>request, mfaAuthMethod (same value), login, flowToken, canary
+  E-->>C: 302 code, or 200 interrupt HTML
+'''
+
+F['fig-12-fido-from-tfa'] = '''sequenceDiagram
+  autonumber
+  participant C as Client
+  participant K as FIDO authenticator<br/>(local)
+  participant E as ESTS
+  participant EF as login.microsoft.com
+  C->>E: POST /{tenant}/login  (username and password, Figure 5)
+  E-->>C: 200 pgid=ConvergedTFA<br/>arrUserProofs includes FidoKey<br/>Auth Config also contains arrFidoAllowList, urlFidoLogin, iAllowedIdentities, urlPost
+  Note over C,E: BeginAuth is not used for FidoKey
+  C->>EF: POST {urlFidoLogin}<br/>credentialsJson=arrFidoAllowList[0] unchanged, other fields as in Figure 7
+  EF-->>C: 200 HTML with a new $Config<br/>sFidoChallenge, sCrossDomainCanary, sessionId
+  Note over C,E: Keep initiating page urlPost, sFT, sCtx, canary<br/>Take challenge, cross-domain canary, and sessionId from bootstrap
+  C->>K: challenge
+  K-->>C: assertion
+  C->>E: POST {initiating-page urlPost}: type=23, ps=23, assertion, lmcCanary, hpgrequestid, ctx, canary, flowToken
+  E-->>C: Authorization response, ConvergedTFA, interrupt, or continuation
+'''
+
+F['fig-13-interrupts'] = '''flowchart TB
+ A["Response after primary authentication or proof completion"] --> B{"Classify response"}
+ B -->|"authorization response"| T(["ESTS complete<br/>upstream OAuth handoff"])
+ B -->|"continuation form"| AS["Submit genuine continuation<br/>bounded hops / deadline, Figure 17"]
+ B -->|"HTML with Auth Config"| P{"Page state and errors"}
+ P -->|"ConvergedTFA"| M["Select another offered usable proof"]
+ P -->|"KmsiInterrupt"| K["POST advertised continuation, Figure 14"]
+ P -->|"ProofUp with skip URL"| S["Skip resume, Figure 15"]
+ P -->|"ProofUp with offered postponement"| D["Postponement continuation, Figure 15"]
+ P -->|"ProofUp without continuation / consent"| I(["External interaction required"])
+ P -->|"ConvergedChangePassword"| SS["SSPR, Figure 16"]
+ P -->|"credential or service failure"| E(["Stop or explicit recovery, Figure 22"])
+ AS --> B
+ M --> B
+ K --> B
+ S --> B
+ D --> B
+ SS --> B
+'''
+
+F['fig-14-kmsi'] = '''sequenceDiagram
   autonumber
   participant C as Client
   participant E as ESTS
@@ -255,81 +276,140 @@ F['fig-14-kmsi']='''sequenceDiagram
     E-->>C: 200 HTML with a new $Config (re-parse)
   end
 '''
-F['fig-15-proofup']='''sequenceDiagram
+
+F['fig-15-proofup'] = '''sequenceDiagram
   autonumber
   participant C as Client
   participant E as ESTS<br/>login.microsoftonline.com
   participant R as mysignins.microsoft.com<br/>(registration, not specified)
-  Note over C,E: After ProcessAuth or login: 200 pgid=ConvergedProofUpRedirect<br/>sErrorCode 50203, urlSkipMfaRegistration<br/>urlPost on the registration host, no sCtx
+  Note over C,E: After ProcessAuth or login: 200 pgid=ConvergedProofUpRedirect<br/>sErrorCode can be 50203; skip URL may exist without remaining-days metadata<br/>urlPost on the registration host, no sCtx
   alt registration required or chosen
     C-xR: register a method (out of scope)
   else skip (urlSkipMfaRegistration advertised)
     C->>E: POST /{tenant}/resume?skipmfaregistration=1 (form)<br/>flowtoken=sFT, ctx=request value posted to ProcessAuth, canary
     E-->>C: 302 Location with code and session_state<br/>+ authenticated cookies, CCState, SignInStateCookie
-  else postponement days remain (iRemainingDaysToSkipMfaRegistration)
+  else postponement is offered (remaining days)
     C->>E: POST current urlPost: LoginOptions=1, ctx, flowToken (preceding page), canary (interrupt page)
     E-->>C: new $Config, 302 with code, or further interrupt
   end
 '''
-F['fig-16-sspr']='''sequenceDiagram
-  autonumber
-  participant C as Client
-  participant E as ESTS
-  Note over C,E: Password login returned pgid=ConvergedChangePassword<br/>urlAsyncSsprBegin, urlAsyncSsprPoll, urlPost (may be root-relative)
-  C->>E: POST {urlAsyncSsprBegin} (JSON)<br/>{Ctx, FlowToken, OldPassword, NewPassword}
-  E-->>C: 200 {IsJobPending: true, Ctx, FlowToken, CoupledDataCenter, CoupledScaleUnit, ErrorMessage}
-  loop about once per second while IsJobPending is true
-    C->>E: POST {urlAsyncSsprPoll} (JSON)<br/>{Ctx, FlowToken, CoupledDataCenter, CoupledScaleUnit}
-    E-->>C: 200 {IsJobPending, Ctx, FlowToken, ..., ErrorMessage}
-  end
-  Note over C,E: Stop on non-null ErrorMessage. Confirm only after completion without error.
-  C->>E: POST {urlPost} (JSON)<br/>{Ctx, FlowToken, currentpasswd, confirmnewpasswd, canary}
-  E-->>C: HTTP success status
-  Note over C,E: Restart interactive authentication with the new password<br/>(new authorize request, amr_values=ngcmfa omitted)
+
+F['fig-16-sspr'] = '''sequenceDiagram
+ autonumber
+ participant C as Client
+ participant E as ESTS
+ Note over C,E: ConvergedChangePassword advertises begin, poll, and confirmation URLs
+ C->>E: POST {urlAsyncSsprBegin} (JSON)<br/>Ctx=sCtx, FlowToken=sFT, OldPassword, NewPassword
+ E-->>C: IsJobPending, Ctx, FlowToken, routing fields, ErrorMessage
+ loop job pending within local deadline
+  C->>E: POST {urlAsyncSsprPoll} (JSON)<br/>preceding Ctx, FlowToken, CoupledDataCenter, CoupledScaleUnit
+  E-->>C: Updated job state and ErrorMessage
+ end
+ Note over C,E: Confirm only when completed without ErrorMessage
+ alt JSON confirmation
+  C->>E: POST {urlPost} (JSON)<br/>Ctx, FlowToken, currentpasswd, confirmnewpasswd, canary
+ else form confirmation
+  C->>E: POST {urlPost} (form)<br/>ctx, flowToken, currentpasswd, confirmnewpasswd, canary
+ end
+ E-->>C: Confirmation status, authorization response, or page
+ Note over C,E: Dispatch returned page; restart with new password only if continuation unavailable<br/>Restart is client recovery, not a required server transition
 '''
-F['fig-17-autosubmit']='''flowchart TB
+
+F['fig-17-autosubmit'] = '''flowchart TB
   A["200 HTML response"] --> B{"Interstitial<br/>marker present?"}
   B -.- MK["Markers (substring match on body):<br/>Click Submit to continue<br/>Working...<br/>Click here to finish the authorization process<br/>input type=submit"]
-  B -->|no| C{"Authorization response?<br/>(Figure 20)"}
+  B -->|no| C{"Authorization response?<br/>(Figure 23)"}
   C -->|yes| T(["extract code"])
   C -->|no| P["Parse $Config<br/>(Figure 13 / Figure 22)"]
   B -->|yes| D["Parse first form<br/>resolve action against response URL"]
   D --> E["Collect enabled continuation inputs<br/>with name and value; preserve duplicates"]
   E --> F["POST to action<br/>(application/x-www-form-urlencoded)"]
-  F -->|"next response"| B
+  F -->|"next response within hop / deadline bounds"| B
+  F -->|"cancel / limit / repeated loop"| X(["Stop; no automatic restart"])
 '''
-F['fig-18-device-code']='''sequenceDiagram
-  autonumber
-  participant C as Client
-  participant E as ESTS (v2.0)
-  participant B as User's browser<br/>(any device)
-  C->>E: POST /{tenant|common}/oauth2/v2.0/devicecode<br/>client_id, scope=openid profile offline_access + resource scopes
-  E-->>C: 200 {device_code, user_code, verification_uri, expires_in, interval, message}
-  C-->>B: show verification_uri and user_code to the user
-  B->>E: user signs in and completes MFA in a browser
-  loop interval seconds (default 5), on slow_down add 5 seconds,<br/>stop on success, expiry or terminal error
-    C->>E: POST /{tenant|common}/oauth2/v2.0/token<br/>client_id, grant_type=urn:ietf:params:oauth:grant-type:device_code, device_code
-    E-->>C: 400 {error: authorization_pending, error_codes: [70016]}
-  end
-  C->>E: POST /{tenant|common}/oauth2/v2.0/token (same request)
-  E-->>C: 200 {access_token, refresh_token, id_token, expires_in (number), scope}
-  Note over C,E: Validate the ID token and compare stable identity claims to the intended account
-  opt redeem the refresh token for another resource
-    C->>E: POST /{tenant}/oauth2/v2.0/token<br/>client_id, grant_type=refresh_token, refresh_token,<br/>scope=...{resource}/.default, client_info=1
-    E-->>C: 200 token response
-  end
+
+F['fig-18-consumers-federated'] = '''flowchart TB
+ G["Credential discovery"] --> Q{"Account / credential route"}
+ Q -->|"personal-account route"| C(["External account interaction<br/>upstream references, section 2.19"])
+ Q -->|"FederationRedirectUrl"| I["External IdP sign-in<br/>IdP protocol outside ESTS"]
+ I --> R["Federation return<br/>POST returned sign-in form to authority-origin /login.srf"]
+ R --> O{"ESTS response"}
+ O -->|"authorization response"| A(["Upstream OAuth handoff"])
+ O -->|"ConvergedTFA"| M["Choose usable offered proof<br/>same SAS, FIDO, or TAP paths"]
+ O -->|"interrupt / continuation"| P["Response dispatcher, Figure 13"]
+ M --> P
+ O -->|"failure"| E(["Stop or explicit recovery"])
 '''
-F['fig-19-consumers-federated']='''flowchart TB
-  G["Credential discovery or later authentication response"] --> Q{"Which indicator?"}
-  Q -->|"IfExistsResult 5<br/>(personal Microsoft account)"| C1["POST login.microsoftonline.com/consumers/oauth2/v2.0/devicecode"]
-  C1 --> C2["Show verification_uri (consumers host, for example www.microsoft.com/link)<br/>and user_code"]
-  C2 --> C3["Poll POST /consumers/oauth2/v2.0/token<br/>until tokens or error"]
-  C3 --> OUT(["tokens<br/>no token for enrollment.manage.microsoft.com"])
-  Q -->|"Credentials.FederationRedirectUrl<br/>(external IdP)"| F1["Browser redirect to the external IdP<br/>not completed by the SAS / Remote NGC APIs"]
-  F1 --> F2["Use another grant: device authorization grant<br/>POST /{tenant}/oauth2/v2.0/devicecode (Figure 18)"]
-  Q -->|"AADSTS 50203, 16000, 50072<br/>(no advertised skip or postponement)"| F2
+
+F['fig-19-v1-v2'] = '''flowchart TB
+ O["Upstream OAuth authorization request"] --> E["ESTS entry<br/>HTML Auth Config and credential discovery"]
+ E --> M["Primary authentication and MFA<br/>endpoint-specific state and proofs"]
+ M --> I{"ESTS response"}
+ I -->|"another proof / continuation"| M
+ I -->|"authorization response"| H(["End ESTS interaction<br/>upstream OAuth handoff, section 2.12"])
+ I -->|"error / external interaction"| X(["Stop or explicit recovery"])
 '''
-F['fig-20-authz-response']='''flowchart TB
+
+F['fig-20-token-lineage'] = '''sequenceDiagram
+ participant C as Client state
+ participant E as ESTS
+ Note over C,E: Entry page: retain sFT, sCtx, canary, sessionId, and URLs<br/>Discovery and Remote NGC do not blanket-replace entry state
+ C->>E: BeginAuth using MFA-page sFT, sCtx, and SAS canary
+ E-->>C: Save SAS SessionId, FlowToken, and Ctx separately
+ alt EndAuth GET, retained-state pattern
+  C->>E: x-ms-sessionId = MFA-page sessionId<br/>x-ms-flowToken and x-ms-ctx = BeginAuth values
+  E-->>C: Pending, keep BeginAuth token and context for next poll
+ else EndAuth GET, response-state pattern
+  C->>E: x-ms-sessionId, x-ms-flowToken, x-ms-ctx<br/>from preceding SAS response
+  E-->>C: Pending, save returned SAS state for next poll
+ else EndAuth POST, code entry
+  C->>E: BeginAuth SessionId, FlowToken, Ctx, plus entered code
+  E-->>C: Recoverable code rejection can permit another entry<br/>keep challenge state, do not repeat BeginAuth
+ end
+ E-->>C: Successful EndAuth supplies completion FlowToken and Ctx
+ C->>E: ProcessAuth: flowToken = successful FlowToken<br/>request = successful Ctx, canary = MFA-page canary
+ opt ProofUp skip URL advertised
+  E-->>C: New ProofUp sFT and canary, sCtx can be absent
+  C->>E: Skip resume: flowtoken = ProofUp sFT, canary = ProofUp canary<br/>ctx = preceding ProcessAuth request when sCtx is absent
+ end
+ Note over C,E: FIDO uses a separate bootstrap without blanket state replacement<br/>Keep initiating urlPost, sFT, sCtx, and canary<br/>Bootstrap supplies challenge, cross-domain canary, and completion sessionId
+'''
+
+F['fig-21-cookies'] = '''sequenceDiagram
+ autonumber
+ participant C as Client cookie jar
+ participant E as ESTS
+ C->>E: Authorize and discovery
+ E-->>C: Page / context / routing cookies as issued
+ C->>E: Primary authentication
+ E-->>C: ESTSAUTH cookies may already be present before MFA
+ Note over C,E: Cookie presence does not prove MFA or authorization completion
+ C->>E: SAS BeginAuth / EndAuth
+ E-->>C: Challenge state and any Set-Cookie updates
+ C->>E: ProcessAuth / advertised continuation
+ E-->>C: Cookie rotations and authorization response or interrupt
+ Note over C,E: Honor cookie domain, path, expiry, and deletion<br/>No fixed cookie inventory or rotation sequence is required
+'''
+
+F['fig-22-errors'] = '''flowchart TB
+ R["ESTS response"] --> C{"Response channel"}
+ C -->|"HTML"| H["Auth Config pgid and error fields<br/>numeric or symbolic sErrorCode"]
+ C -->|"SAS JSON"| S{"Success?"}
+ C -->|"Remote NGC JSON"| N["AuthorizationState: pending / denied / approved<br/>unknown state requires explicit failure handling"]
+ C -->|"authorization response"| O["Upstream OAuth error handling"]
+ H --> P{"Actionable interrupt or error?"}
+ P -->|"initial 50058 / advertised ProofUp skip"| A["Continue according to page state"]
+ P -->|"credential / service error"| E(["Stop or explicit recovery"])
+ S -->|"true"| F["Complete with successful state"]
+ S -->|"false: polling"| Q{"Retry"}
+ Q -->|"true within bounds"| W["Wait and poll"]
+ Q -->|"false / unrecognized"| E
+ S -->|"false: code submission"| K{"Recoverable code rejection?"}
+ K -->|"yes, even if Retry absent or false"| T["Re-prompt using retained challenge state"]
+ K -->|"terminal / unrecognized"| E
+'''
+
+F['fig-23-authz-response'] = '''flowchart TB
   A["Response to a POST that can complete the flow<br/>(or a silent authorize request)"] --> B{"Delivery form"}
   B -->|"302 with Location"| L["Parse Location URL<br/>read code, session_state<br/>error present means failure; description is optional"]
   B -->|"302 with HTML body containing an anchor"| H["Read anchor href with an HTML parser<br/>parse URL, then decode query values once"]
@@ -340,104 +420,9 @@ F['fig-20-authz-response']='''flowchart TB
   H --> X
   J --> X
   FA --> X
-  X["Validate response target and state;<br/>accept code only on success"] -->|"code accepted"| TK["POST /{tenant}/oauth2/token<br/>client_id, grant_type=authorization_code,<br/>code, redirect_uri (identical to authorize)"]
-  X -->|"error or invalid response binding"| REJECT(["Stop; do not redeem a code"])
-  TK --> R{"Response"}
-  R -->|"200 JSON"| OK(["access_token, refresh_token, id_token<br/>expires_in etc. as JSON strings (v1)"])
-  R -->|"400 JSON error, error_description AADSTS..."| ER(["error (Figure 22)"])
+  X["Apply upstream response validation<br/>section 2.12"] -->|"authorization response accepted"| HANDOFF(["ESTS complete: upstream OAuth handoff"])
+  X -->|"error or invalid binding"| REJECT(["Stop"])
 '''
-F['fig-21-token-lineage']='''flowchart TB
-  subgraph AZ["authorize page ($Config)"]
-    s1["sFT, sCtx, canary<br/>apiCanary, sessionId"]
-  end
-  s1 -->|"sFT, sCtx"| GCT["GetCredentialType<br/>flowToken, originalRequest"]
-  s1 -->|"sFT, sCtx, canary"| GOT["GetOneTimeCode"]
-  s1 -->|"canary"| DCS["DeviceCodeStatus polls<br/>(no flow token)"]
-  s1 -->|"sFT, sCtx, canary<br/>+ SessionIdentifier"| LNGC["login (Remote NGC)"]
-  s1 -->|"sFT, sCtx, canary"| LPW["login (password)"]
-  LPW --> TFA
-  subgraph TFA["ConvergedTFA page ($Config)"]
-    s2["sFT, sCtx, canary, sessionId"]
-  end
-  s2 -->|"sFT, sCtx, canary"| BA["BeginAuth"]
-  BA -->|"FlowToken, Ctx<br/>(reused on every poll)"| EA["EndAuth polls<br/>x-ms-flowToken, x-ms-ctx<br/>x-ms-sessionId = TFA sessionId"]
-  EA -->|"final FlowToken, Ctx"| PA["ProcessAuth<br/>flowToken, request=Ctx<br/>canary from TFA page"]
-  s2 -->|"canary"| PA
-  PA --> PUP
-  subgraph PUP["ProofUp page ($Config, no sCtx)"]
-    s3["sFT, canary, sessionId"]
-  end
-  s3 -->|"sFT, canary"| RES["resume?skipmfaregistration=1<br/>flowtoken, canary"]
-  PA -->|"ctx = request value posted to ProcessAuth"| RES
-  RES -->|"302 code"| TK["token endpoint"]
-'''
-F['fig-22-errors']='''flowchart LR
-  R["Any ESTS response"] --> K{"Channel"}
-  K -->|"200 HTML with $Config"| A["sErrorCode / iErrorCode<br/>sErrTxt, strServiceExceptionMessage, arrValErrs<br/>(50058 on the first page is not an error)"]
-  K -->|"SAS JSON"| B["Success false, Retry false<br/>ResultValue, Message, ErrCode"]
-  K -->|"302 Location"| C["error and error_description<br/>(AADSTS{code}: ... Trace ID, Correlation ID, Timestamp)"]
-  K -->|"token or devicecode JSON"| D["error, error_description,<br/>error_codes[], timestamp, trace_id, correlation_id"]
-  A --> M{"Diagnostic AADSTS code<br/>(interpret with flow state)"}
-  B --> M
-  C --> M
-  D --> M
-  M -->|"50126, 50053"| M1(["credentials rejected or account locked"])
-  M -->|"500121"| M2(["MFA not completed"])
-  M -->|"50087"| M3(["transient SAS error: retry"])
-  M -->|"50089"| M4(["flow token expired: restart"])
-  M -->|"50076, 50074"| M5(["MFA required: new authorize request"])
-  M -->|"50203, 50072, 50079, 16000"| M6(["registration / interaction required:<br/>use advertised skip; otherwise interactive flow"])
-  M -->|"50055"| M7(["password change interrupt (Figure 16)"])
-  M -->|"70016"| M8(["device flow pending: keep polling"])
-  M -->|"54005, 70011, 700016, 65001, 53003"| M9(["code redeemed, scope, app or consent, Conditional Access"])
-'''
-F['fig-23-cookies']='''sequenceDiagram
-  autonumber
-  participant C as Client cookie jar
-  participant E as ESTS
-  C->>E: GET authorize (no cookies)
-  E-->>C: Set-Cookie buid, esctx, esctx-A, fpc, stsservicecookie, x-ms-gateway-slice
-  C->>E: GetCredentialType / GetOneTimeCode / DeviceCodeStatus (jar returned)
-  E-->>C: Set-Cookie fpc, x-ms-gateway-slice
-  C->>E: POST login (password or Remote NGC)
-  E-->>C: Set-Cookie ESTSAUTH, ESTSAUTHPERSISTENT, ESTSAUTHLIGHT, new buid, esctx, esctx-B<br/>delete esctx-A (empty value, past expiry)<br/>Remote NGC: also CCState, SignInStateCookie (code issued)
-  Note over C,E: Password path: these are present before MFA completes<br/>and are not proof of authentication
-  C->>E: SAS BeginAuth / EndAuth polls (jar returned)
-  E-->>C: Set-Cookie fpc, x-ms-gateway-slice
-  C->>E: POST ProcessAuth
-  E-->>C: re-issue ESTSAUTH*, buid, esctx, esctx-C<br/>delete esctx-B
-  C->>E: POST resume
-  E-->>C: re-issue auth cookies, CCState, SignInStateCookie<br/>delete esctx-C, 302 with code
-  C->>E: POST /{tenant}/oauth2/token
-  E-->>C: Set-Cookie fpc, x-ms-gateway-slice only
-'''
-F['fig-24-v1-v2']='''flowchart TB
-  subgraph V1["v1 endpoints: interactive MFA API surface"]
-    direction TB
-    a1["GET /{tenant}/oauth2/authorize<br/>resource, amr_values=ngcmfa,<br/>caller_app_*, sso_reload"]
-    a1 --> AC["Auth Config pages<br/>follow-on APIs use advertised URLs (absolute or relative)<br/>with no endpoint-version marker"]
-    AC --> a2["POST /{tenant}/oauth2/token<br/>client_id, grant_type, code, redirect_uri"]
-  end
-  subgraph V2["v2.0 endpoints"]
-    direction TB
-    b1["GET /{tenant}/oauth2/v2.0/authorize<br/>scope, code_challenge, state, nonce, domain_hint<br/>ngcmfa and caller_app_* behavior unverified"]
-    b3["POST /{tenant}/oauth2/v2.0/devicecode"]
-    b1 -->|"interactive or silent authorization"| b2["POST /{tenant}/oauth2/v2.0/token<br/>authorization_code, refresh_token,<br/>password, device_code grants"]
-    b3 --> b2
-  end
-  a2 --> T1(["Access token version is chosen by the target resource<br/>(ver 1.0 or 2.0), not by the endpoint"])
-  b2 --> T1
-'''
-
-import re as _re
-_REMAP={1: 1, 3: 2, 2: 3, 4: 4, 5: 5, 12: 6, 10: 7, 6: 8, 7: 9, 8: 10, 9: 11, 11: 12, 13: 13, 14: 14, 15: 15, 16: 16, 17: 17, 19: 18, 18: 19, 24: 20, 21: 21, 23: 22, 22: 23, 20: 24}
-for _k in list(F):
-    F[_k]=F[_k].replace('Figure 13 / 22','Figure 13 / Figure 22')
-    F[_k]=_re.sub(r'Figure (\d+)',lambda m:'Figure %d'%_REMAP[int(m.group(1))],F[_k])
-_new={}
-for _k,_v in F.items():
-    _n=int(_k.split('-')[1]); _new['fig-%02d-%s'%(_REMAP[_n],_k.split('-',2)[2])]=_v
-F=_new
 
 import re,textwrap
 def wrap_text(t,w=54):
@@ -453,7 +438,7 @@ def fix_seq(src):
         if m: parts.append(m.group(1))
         m=re.match(r'(\s*)(loop|opt)\s+(.*)',ln)
         if m and len(m.group(3))>34:
-            out.append('%s%s poll'%(m.group(1),m.group(2)) if m.group(2)=='loop' else '%sopt details'%m.group(1))
+            out.append('%s%s repeat'%(m.group(1),m.group(2)) if m.group(2)=='loop' else '%sopt details'%m.group(1))
             out.append('%s  Note over %s,%s: %s'%(m.group(1),parts[0],parts[1],wrap_text(m.group(3),70)))
             continue
         m=re.match(r'(\s*)(Note over [^:]+:)\s*(.*)',ln)
@@ -472,7 +457,7 @@ def fix_seq(src):
         out.append(ln)
     return '\n'.join(out)
 for k in list(F):
-    if F[k].startswith('sequenceDiagram'): F[k]=fix_seq(F[k])
+    if F[k].startswith('sequenceDiagram'): F[k]=fix_seq(F[k].replace(';', ','))
 from pathlib import Path
 source_dir = Path(__file__).resolve().parent / 'src'
 source_dir.mkdir(parents=True, exist_ok=True)

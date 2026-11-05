@@ -1,0 +1,7 @@
+flowchart TB
+ O["Upstream OAuth authorization request"] --> E["ESTS entry<br/>HTML Auth Config and credential discovery"]
+ E --> M["Primary authentication and MFA<br/>endpoint-specific state and proofs"]
+ M --> I{"ESTS response"}
+ I -->|"another proof / continuation"| M
+ I -->|"authorization response"| H(["End ESTS interaction<br/>upstream OAuth handoff, section 2.12"])
+ I -->|"error / external interaction"| X(["Stop or explicit recovery"])

@@ -1,0 +1,14 @@
+sequenceDiagram
+ autonumber
+ participant C as Client cookie jar
+ participant E as ESTS
+ C->>E: Authorize and discovery
+ E-->>C: Page / context / routing cookies as issued
+ C->>E: Primary authentication
+ E-->>C: ESTSAUTH cookies may already be present before MFA
+ Note over C,E: Cookie presence does not prove MFA or authorization completion
+ C->>E: SAS BeginAuth / EndAuth
+ E-->>C: Challenge state and any Set-Cookie updates
+ C->>E: ProcessAuth / advertised continuation
+ E-->>C: Cookie rotations and authorization response or interrupt
+ Note over C,E: Honor cookie domain, path, expiry, and deletion<br/>No fixed cookie inventory or rotation sequence is required

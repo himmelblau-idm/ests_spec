@@ -9,10 +9,11 @@ sequenceDiagram
   Note over E,C: arrUserProofs includes FidoKey<br/>Auth Config also contains arrFidoAllowList, urlFidoLogin,<br/>iAllowedIdentities, urlPost
   Note over C,E: BeginAuth is not used for FidoKey
   C->>EF: POST {urlFidoLogin}
-  Note over C,EF: credentialsJson=arrFidoAllowList[0], other fields as in Figure 7
+  Note over C,EF: credentialsJson=arrFidoAllowList[0] unchanged, other fields as in Figure<br/>7
   EF-->>C: 200 HTML with a new $Config
-  Note over EF,C: sFidoChallenge, sCrossDomainCanary, sessionId, sFT, sCtx, canary,<br/>urlPost
+  Note over EF,C: sFidoChallenge, sCrossDomainCanary, sessionId
+  Note over C,E: Keep initiating page urlPost, sFT, sCtx, canary<br/>Take challenge, cross-domain canary, and sessionId from bootstrap
   C->>K: challenge
   K-->>C: assertion
-  C->>E: POST {urlPost}: type=23, ps=23, assertion, lmcCanary,<br/>hpgrequestid, ctx, canary, flowToken
-  E-->>C: 302 with code, 200 HTML anchor with code, or interrupt HTML
+  C->>E: POST {initiating-page urlPost}: type=23, ps=23, assertion,<br/>lmcCanary, hpgrequestid, ctx, canary, flowToken
+  E-->>C: Authorization response, ConvergedTFA, interrupt, or continuation

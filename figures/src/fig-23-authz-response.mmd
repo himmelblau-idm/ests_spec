@@ -9,8 +9,5 @@ flowchart TB
   H --> X
   J --> X
   FA --> X
-  X["Validate response target and state;<br/>accept code only on success"] -->|"code accepted"| TK["POST /{tenant}/oauth2/token<br/>client_id, grant_type=authorization_code,<br/>code, redirect_uri (identical to authorize)"]
-  X -->|"error or invalid response binding"| REJECT(["Stop; do not redeem a code"])
-  TK --> R{"Response"}
-  R -->|"200 JSON"| OK(["access_token, refresh_token, id_token<br/>expires_in etc. as JSON strings (v1)"])
-  R -->|"400 JSON error, error_description AADSTS..."| ER(["error (Figure 23)"])
+  X["Apply upstream response validation<br/>section 2.12"] -->|"authorization response accepted"| HANDOFF(["ESTS complete: upstream OAuth handoff"])
+  X -->|"error or invalid binding"| REJECT(["Stop"])
